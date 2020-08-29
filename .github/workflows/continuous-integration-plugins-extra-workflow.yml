@@ -6,9 +6,8 @@ jobs:
     name: Windows
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v2
     - name: Checkout
-
+      uses: actions/checkout@v2
     
     - name: Checkout Plugins-Extra
       uses: actions/checkout@v2
