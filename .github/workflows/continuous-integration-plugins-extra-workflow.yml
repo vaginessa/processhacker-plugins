@@ -28,7 +28,7 @@ jobs:
       continue-on-error: true
       run: |
         msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64
-        zip --junk-paths plugins-extra_x64-release bin/Release64/plugins/*.dll
+        7z a -tzip -r plugins-extra_x64-release.zip ".\bin\Release64\plugins\*.dll" -x!SbieSupport.dll
 
     - name: Archive plugins artifacts
       uses: actions/upload-artifact@v2
