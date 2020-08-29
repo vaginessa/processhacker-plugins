@@ -1,13 +1,14 @@
 name: ProcessHacker With Plugins Extra
 on: push
 jobs:
-  # swy: 64-bit windows build --
+  #64-bit windows build --
   build-win:
     name: Windows
     runs-on: windows-latest
     steps:
+    - uses: actions/checkout@v2
     - name: Checkout
-      uses: actions/checkout@v2
+
     
     - name: Checkout Plugins-Extra
       uses: actions/checkout@v2
@@ -17,13 +18,14 @@ jobs:
         fetch-depth: 1
     - run: git checkout HEAD
 
+    - uses: microsoft/setup-msbuild@v1.0.1 
+    
     - name: Build ProcessHacker
-      uses: microsoft/setup-msbuild@v1.0.1
       run: |
         msbuild ProcessHacker.sln /p:Configuration=Release /p:Platform=x64
-        
+
+ 
     - name: Build Plugins Extra   
-      uses: microsoft/setup-msbuild@v1.0.1
       continue-on-error: true
       run: |
         msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64
