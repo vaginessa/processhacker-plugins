@@ -20,6 +20,7 @@ jobs:
     - uses: microsoft/setup-msbuild@v1.0.1 
     
     - name: Build ProcessHacker
+      continue-on-error: true
       run: |
         msbuild ProcessHacker.sln /p:Configuration=Release /p:Platform=x64
 
