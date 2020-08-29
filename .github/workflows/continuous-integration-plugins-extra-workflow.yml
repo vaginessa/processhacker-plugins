@@ -15,7 +15,7 @@ jobs:
         repository: processhacker/plugins-extra
         path: plugins-extra
         fetch-depth: 1
-      run: git checkout HEAD
+    - run: git checkout HEAD
 
     - name: Build ProcessHacker
       uses: microsoft/setup-msbuild@v1.0.1
