@@ -708,7 +708,6 @@ _Callback_ PPH_STRING PhStdGetClientIdName(
     PSYSTEM_PROCESS_INFORMATION processInfo;
 
     // Get a new process list only if 2 seconds have passed since the last update.
-
     tickCount = NtGetTickCount64();
 
     if (tickCount - lastProcessesTickCount >= 2000)

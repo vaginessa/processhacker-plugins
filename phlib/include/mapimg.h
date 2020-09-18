@@ -96,6 +96,7 @@ PhMappedImageRvaToSection(
     );
 
 PHLIBAPI
+_Success_(return != NULL)
 PVOID
 NTAPI
 PhMappedImageRvaToVa(
@@ -105,6 +106,7 @@ PhMappedImageRvaToVa(
     );
 
 PHLIBAPI
+_Success_(return != NULL)
 PVOID
 NTAPI
 PhMappedImageVaToVa(
@@ -728,6 +730,29 @@ NTAPI
 PhGetMappedImageEhCont(
     _Out_ PPH_MAPPED_IMAGE_EH_CONT EhContConfig,
     _In_ PPH_MAPPED_IMAGE MappedImage
+    );
+
+typedef struct _IMAGE_DEBUG_POGO_ENTRY
+{
+    ULONG Rva;
+    ULONG Size;
+    CHAR Name[1];
+} IMAGE_DEBUG_POGO_ENTRY, *PIMAGE_DEBUG_POGO_ENTRY;
+
+typedef struct _IMAGE_DEBUG_POGO_SIGNATURE
+{
+    ULONG Signature;
+} IMAGE_DEBUG_POGO_SIGNATURE, *PIMAGE_DEBUG_POGO_SIGNATURE;
+
+#define IMAGE_DEBUG_POGO_SIGNATURE_LTCG 'LTCG' // coffgrp LTCG (0x4C544347)
+#define IMAGE_DEBUG_POGO_SIGNATURE_PGU 'PGU\0' // coffgrp PGU (0x50475500)
+
+_Success_(return)
+BOOLEAN PhGetMappedImagePogoEntryByName(
+    _In_ PPH_MAPPED_IMAGE MappedImage,
+    _In_ PSTR Name,
+    _Out_opt_ ULONG* DataLength,
+    _Out_opt_ PVOID* DataBuffer
     );
 
 // ELF binary support

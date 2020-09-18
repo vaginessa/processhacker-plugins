@@ -887,9 +887,7 @@ PSTR PhpSettingsSaveCallback(
 
     if (PhEqualBytesZ(elementName, "setting", TRUE))
     {
-        if (position == MXML_WS_BEFORE_OPEN)
-            return "  ";
-        else if (position == MXML_WS_AFTER_CLOSE)
+        if (position == MXML_WS_AFTER_CLOSE)
             return "\r\n";
     }
     else if (PhEqualBytesZ(elementName, "settings", TRUE))

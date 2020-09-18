@@ -1397,7 +1397,25 @@ VOID ProcessNodeCreateCallback(
     LockDb();
 
     if ((object = FindDbObjectForProcess(processNode->ProcessItem, INTENT_PROCESS_COLLAPSE)) && object->Collapse)
-        processNode->Node.Expanded = FALSE;
+    {
+        BOOLEAN visible = TRUE;
+
+        for (PPH_PROCESS_NODE parent = processNode->Parent; parent; parent = parent->Parent)
+        {
+            if (!parent->Node.Visible)
+            {
+                // Don't change the Expanded state when the node is already hidden by
+                // main window -> View -> Hide Processes from other users menu (dmex)
+                visible = FALSE;
+                break;
+            }
+        }
+
+        if (visible)
+        {
+            processNode->Node.Expanded = FALSE;
+        }
+    }
 
     UnlockDb();
 }
@@ -1408,7 +1426,7 @@ VOID ServiceItemCreateCallback(
     _In_ PVOID Extension
     )
 {
-    PPH_SERVICE_ITEM processItem = Object;
+    PPH_SERVICE_ITEM serviceItem = Object;
     PSERVICE_EXTENSION extension = Extension;
 
     memset(extension, 0, sizeof(SERVICE_EXTENSION));
@@ -1423,7 +1441,7 @@ VOID ServiceItemDeleteCallback(
     _In_ PVOID Extension
     )
 {
-    PPH_SERVICE_ITEM processItem = Object;
+    PPH_SERVICE_ITEM serviceItem = Object;
     PSERVICE_EXTENSION extension = Extension;
 
     PhClearReference(&extension->Comment);

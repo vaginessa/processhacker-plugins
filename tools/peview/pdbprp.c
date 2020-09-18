@@ -652,16 +652,21 @@ BOOLEAN NTAPI PvSymbolTreeNewCallback(
     _In_opt_ PVOID Context
     )
 {
-    PPDB_SYMBOL_CONTEXT context;
+    PPDB_SYMBOL_CONTEXT context = Context;
     PPV_SYMBOL_NODE node;
 
-    context = Context;
+    if (!context)
+        return FALSE;
 
     switch (Message)
     {
     case TreeNewGetChildren:
         {
             PPH_TREENEW_GET_CHILDREN getChildren = Parameter1;
+
+            if (!getChildren)
+                break;
+
             node = (PPV_SYMBOL_NODE)getChildren->Node;
 
             if (!getChildren->Node)
@@ -694,6 +699,10 @@ BOOLEAN NTAPI PvSymbolTreeNewCallback(
     case TreeNewIsLeaf:
         {
             PPH_TREENEW_IS_LEAF isLeaf = (PPH_TREENEW_IS_LEAF)Parameter1;
+
+            if (!isLeaf)
+                break;
+
             node = (PPV_SYMBOL_NODE)isLeaf->Node;
 
             isLeaf->IsLeaf = TRUE;
@@ -702,6 +711,10 @@ BOOLEAN NTAPI PvSymbolTreeNewCallback(
     case TreeNewGetCellText:
         {
             PPH_TREENEW_GET_CELL_TEXT getCellText = (PPH_TREENEW_GET_CELL_TEXT)Parameter1;
+
+            if (!getCellText)
+                break;
+
             node = (PPV_SYMBOL_NODE)getCellText->Node;
 
             switch (getCellText->Id)
@@ -784,6 +797,10 @@ BOOLEAN NTAPI PvSymbolTreeNewCallback(
     case TreeNewGetNodeColor:
         {
             PPH_TREENEW_GET_NODE_COLOR getNodeColor = (PPH_TREENEW_GET_NODE_COLOR)Parameter1;
+
+            if (!getNodeColor)
+                break;
+
             node = (PPV_SYMBOL_NODE)getNodeColor->Node;
 
             getNodeColor->Flags = TN_CACHE | TN_AUTO_FORECOLOR;
@@ -1122,7 +1139,7 @@ INT_PTR CALLBACK PvpSymbolsDlgProc(
                 0
                 );
 
-            EnableThemeDialogTexture(hwndDlg, ETDT_ENABLETAB);
+            PhInitializeWindowTheme(hwndDlg, PeEnableThemeSupport);
         }
         break;
     case WM_DESTROY:
@@ -1142,12 +1159,9 @@ INT_PTR CALLBACK PvpSymbolsDlgProc(
             {
                 PPH_LAYOUT_ITEM dialogItem;
 
-                dialogItem = PvAddPropPageLayoutItem(hwndDlg, hwndDlg,
-                    PH_PROP_PAGE_TAB_CONTROL_PARENT, PH_ANCHOR_ALL);
-                PvAddPropPageLayoutItem(hwndDlg, context->SearchHandle,
-                    dialogItem, PH_ANCHOR_TOP | PH_ANCHOR_RIGHT);
+                dialogItem = PvAddPropPageLayoutItem(hwndDlg, hwndDlg, PH_PROP_PAGE_TAB_CONTROL_PARENT, PH_ANCHOR_ALL);
+                PvAddPropPageLayoutItem(hwndDlg, context->SearchHandle, dialogItem, PH_ANCHOR_TOP | PH_ANCHOR_RIGHT);
                 PvAddPropPageLayoutItem(hwndDlg, context->TreeNewHandle, dialogItem, PH_ANCHOR_ALL);
-
                 PvDoPropPageLayout(hwndDlg);
 
                 propPageContext->LayoutInitialized = TRUE;
