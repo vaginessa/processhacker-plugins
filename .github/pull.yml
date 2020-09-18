@@ -2,4 +2,4 @@ version: "1"
 rules:
   - base: master
     upstream: processhacker:master
-mergeMethod: merge
+    mergeMethod: merge
