@@ -52,8 +52,6 @@ namespace CustomBuildTool
 
         public static bool InitializeBuildEnvironment()
         {
-            Console.OutputEncoding = Encoding.UTF8;
-
             try
             {
                 DirectoryInfo info = new DirectoryInfo(".");
@@ -1152,7 +1150,7 @@ namespace CustomBuildTool
             if (string.IsNullOrEmpty(buildPostString))
                 return false;
 
-            Program.PrintColorMessage(Environment.NewLine + "Updating... " + BuildVersion, ConsoleColor.Cyan);
+            Program.PrintColorMessage(Environment.NewLine + "Uploading build artifacts... " + BuildVersion, ConsoleColor.Cyan);
 
             try
             {
@@ -1245,8 +1243,6 @@ namespace CustomBuildTool
             //    return false;
             //if (string.IsNullOrEmpty(buildBuildUrlKey))
             //    return false;
-
-            Program.PrintColorMessage(Environment.NewLine + "Uploading build artifacts... " + BuildVersion, ConsoleColor.Cyan);
 
             try
             {
