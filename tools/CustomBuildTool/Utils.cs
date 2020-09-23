@@ -218,7 +218,7 @@ namespace CustomBuildTool
 
         public static string GetPath(string FileName)
         {
-            return "\\tools\\CustomSignTool\\Resources\\" + FileName;
+            return "tools\\CustomSignTool\\Resources\\" + FileName;
         }
 
         public static string GetCustomSignToolFilePath()
@@ -249,23 +249,24 @@ namespace CustomBuildTool
 
         public static string GetOutputDirectoryPath()
         {
-            string folder = Environment.CurrentDirectory + "\\build\\output";
+            return Environment.CurrentDirectory + "\\build\\output";
+        }
+
+        public static void CreateOutputDirectory()
+        {
+            string folder = GetOutputDirectoryPath();
 
             if (File.Exists(folder))
-                return folder;
+                return;
 
             try
             {
                 Directory.CreateDirectory(folder);
-
-                return folder;
             }
             catch (Exception ex)
             {
-                Program.PrintColorMessage("Error creating output directory. " + ex, ConsoleColor.Red);
+                Program.PrintColorMessage("Error creating output directory: " + ex, ConsoleColor.Red);
             }
-
-            return null;
         }
 
         public static VisualStudioInstance GetVisualStudioInstance()
@@ -349,6 +350,13 @@ namespace CustomBuildTool
                     return file;
             }
 
+            {
+                string file = Win32.SearchFile("vswhere.exe");
+
+                if (File.Exists(file))
+                    return file;
+            }
+
             return null;
         }
 
@@ -408,36 +416,38 @@ namespace CustomBuildTool
             return MsBuildFilePath;
         }
 
-        //private static readonly string[] GitPathArray =
-        //{
-        //    "%ProgramFiles%\\Git\\bin\\git.exe",
-        //    "%ProgramFiles(x86)%\\Git\\bin\\git.exe",
-        //    "%ProgramW6432%\\Git\\bin\\git.exe"
-        //};
-        //
-        //public static string GetGitFilePath()
-        //{
-        //    string git = Win32.SearchFile("git.exe");
-        //
-        //    if (File.Exists(git))
-        //        return git;
-        //
-        //    foreach (string path in GitPathArray)
-        //    {
-        //        git = Environment.ExpandEnvironmentVariables(path);
-        //
-        //        if (File.Exists(git))
-        //            return git;
-        //    }
-        //
-        //    return null;
-        //}
-        //
-        //public static string GetGitWorkPath(string Directory)
-        //{
-        //    return "--git-dir=\"" + Directory + "\\.git\" --work-tree=\"" + Directory + "\" "; ;
-        //}
-        //
+        public static string GetGitFilePath()
+        {
+            string[] gitPathArray =
+            {
+                "%ProgramFiles%\\Git\\bin\\git.exe",
+                "%ProgramFiles(x86)%\\Git\\bin\\git.exe",
+                "%ProgramW6432%\\Git\\bin\\git.exe"
+            };
+
+            foreach (string path in gitPathArray)
+            {
+                string file = Environment.ExpandEnvironmentVariables(path);
+
+                if (File.Exists(file))
+                    return file;
+            }
+
+            {
+                string file = Win32.SearchFile("git.exe");
+
+                if (File.Exists(file))
+                    return file;
+            }
+
+            return null;
+        }
+
+        public static string GetGitWorkPath()
+        {
+            return "--git-dir=\"" + Environment.CurrentDirectory + "\\.git\" --work-tree=\"" + Environment.CurrentDirectory + "\" "; ;
+        }
+
         //public static string GetMsbuildFilePath()
         //{
         //    VisualStudioInstance instance;

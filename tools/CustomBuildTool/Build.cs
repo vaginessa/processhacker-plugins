@@ -2,7 +2,7 @@
  * Process Hacker Toolchain - 
  *   Build script
  * 
- * Copyright (C) 2017-2018 dmex
+ * Copyright (C) dmex
  * 
  * This file is part of Process Hacker.
  * 
@@ -22,7 +22,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -119,26 +118,6 @@ namespace CustomBuildTool
             }
         }
 
-        //BuildBranch = Win32.ShellExecute(VisualStudio.GetGitFilePath(), VisualStudio.GetGitWorkPath(Environment.CurrentDirectory) + "rev-parse --abbrev-ref HEAD").Trim();
-        //BuildCommit = Win32.ShellExecute(VisualStudio.GetGitFilePath(), VisualStudio.GetGitWorkPath(Environment.CurrentDirectory) + "rev-parse HEAD").Trim();
-        //BuildCount = Win32.ShellExecute(VisualStudio.GetGitFilePath(), VisualStudio.GetGitWorkPath(Environment.CurrentDirectory) + "rev-list --count " + BuildBranch).Trim();
-        //currentGitTag = Win32.ShellExecute(VisualStudio.GetGitFilePath(), VisualStudio.GetGitWorkPath(Environment.CurrentDirectory) + "describe --abbrev=0 --tags --always").Trim();
-        //BuildRevision = Win32.ShellExecute(VisualStudio.GetGitFilePath(), VisualStudio.GetGitWorkPath(Environment.CurrentDirectory) + "rev-list --count \"" + currentGitTag + ".." + BuildBranch + "\"").Trim();
-        // https://api.github.com/repos/processhacker/processhacker/branches
-        // https://api.github.com/repos/processhacker/processhacker/tags
-        // https://api.github.com/repos/processhacker/processhacker // created_at
-        // https://api.github.com/repos/processhacker/processhacker/compare/master@{created_at}...master
-        // https://api.github.com/repos/processhacker/processhacker/compare/master@{2016-01-01}...master
-        // https://api.github.com/repos/processhacker/processhacker/compare/master...v2.39
-        //string currentGitDir = VisualStudio.GetGitWorkPath(Environment.CurrentDirectory);
-        //buildChangelog = Win32.ShellExecute(GitExePath, currentGitDir + "log -n 30 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %s (%an)\"");
-        //buildSummary = Win32.ShellExecute(GitExePath, currentGitDir + "log -n 5 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %s (%an)\" --abbrev-commit");
-        //buildMessage = Win32.ShellExecute(GitExePath, currentGitDir + "log -1 --pretty=%B");
-        // log -n 5 --date=format:%Y-%m-%d --pretty=format:\"%C(green)[%cd]%Creset %C(bold blue)%an%Creset %<(65,trunc)%s%Creset %C(#696969)(%Creset%C(yellow)%h%Creset%C(#696969))%Creset\" --abbrev-commit
-        // log -n 5 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %an %s\" --abbrev-commit
-        // log -n 1 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %an: %<(65,trunc)%s (%h)\" --abbrev-commi
-        // log -n 1800 --graph --pretty=format:\"%C(yellow)%h%Creset %C(bold blue)%an%Creset %s %C(dim green)(%cr)\" --abbrev-commit
-
         public static void SetupBuildEnvironment(bool ShowBuildInfo)
         {
             BuildBranch = string.Empty;
@@ -150,26 +129,32 @@ namespace CustomBuildTool
 
             try
             {
-                using (var repo = new LibGit2Sharp.Repository(Environment.CurrentDirectory + "\\.git"))
-                {
-                    BuildBranch = repo.Head.FriendlyName;
-                    BuildCommit = repo.Head.Commits.First().Sha;
-                    BuildCount = repo.Commits.Count().ToString();
-                    BuildRevision = repo.Commits.QueryBy(new LibGit2Sharp.CommitFilter
-                    {
-                        SortBy = LibGit2Sharp.CommitSortStrategies.Reverse | LibGit2Sharp.CommitSortStrategies.Time,
-                        ExcludeReachableFrom = repo.Tags[repo.Tags.Last().FriendlyName].Reference,
-                        IncludeReachableFrom = repo.Branches[BuildBranch].Tip
-                    }).Count().ToString();
+                var currentGitDir = VisualStudio.GetGitWorkPath();
+                var currentGitPath = VisualStudio.GetGitFilePath();
 
-                    BuildVersion = "3.0." + BuildRevision;
-                    BuildLongVersion = "3.0." + BuildCount + "." + BuildRevision;
+                if (!string.IsNullOrEmpty(currentGitDir) && !string.IsNullOrEmpty(currentGitPath))
+                {
+                    BuildBranch = Win32.ShellExecute(currentGitPath, currentGitDir + "rev-parse --abbrev-ref HEAD").Trim();
+                    BuildCommit = Win32.ShellExecute(currentGitPath, currentGitDir + "rev-parse HEAD").Trim();
+                    BuildCount = Win32.ShellExecute(currentGitPath, currentGitDir + "rev-list --count " + BuildBranch).Trim();
+                    var currentGitTag = Win32.ShellExecute(currentGitPath, currentGitDir + "describe --abbrev=0 --tags --always").Trim();
+                    if (!string.IsNullOrEmpty(currentGitTag))
+                    {
+                        BuildRevision = Win32.ShellExecute(currentGitPath, currentGitDir + "rev-list --count \"" + currentGitTag + ".." + BuildBranch + "\"").Trim();
+                        BuildVersion = "3.0." + BuildRevision;
+                        BuildLongVersion = "3.0." + BuildCount + "." + BuildRevision;
+                    }
                 }
             }
-            catch (Exception ex)
-            {
-                Program.PrintColorMessage("[Build] " + ex, ConsoleColor.Yellow);
+            catch (Exception) {  }
 
+            if (
+                string.IsNullOrEmpty(BuildBranch) ||
+                string.IsNullOrEmpty(BuildCommit) ||
+                string.IsNullOrEmpty(BuildCount) ||
+                string.IsNullOrEmpty(BuildRevision)
+                )
+            {
                 BuildBranch = string.Empty;
                 BuildCommit = string.Empty;
                 BuildCount = string.Empty;
@@ -211,6 +196,38 @@ namespace CustomBuildTool
 
                 Program.PrintColorMessage(Environment.NewLine, ConsoleColor.DarkGray, true);
             }
+
+            //using (var repo = new LibGit2Sharp.Repository(Environment.CurrentDirectory + "\\.git"))
+            //{
+            //    BuildBranch = repo.Head.FriendlyName;
+            //    BuildCommit = repo.Head.Commits.First().Sha;
+            //    BuildCount = repo.Commits.Count().ToString();
+            //    BuildRevision = repo.Commits.QueryBy(new LibGit2Sharp.CommitFilter
+            //    {
+            //        SortBy = LibGit2Sharp.CommitSortStrategies.Reverse | LibGit2Sharp.CommitSortStrategies.Time,
+            //        ExcludeReachableFrom = repo.Tags[repo.Tags.Last().FriendlyName].Reference,
+            //        IncludeReachableFrom = repo.Branches[BuildBranch].Tip
+            //    }).Count().ToString();
+            //
+            //    BuildVersion = "3.0." + BuildRevision;
+            //    BuildLongVersion = "3.0." + BuildCount + "." + BuildRevision;
+            //}
+            //
+            //buildChangelog = Win32.ShellExecute(GitExePath, currentGitDir + "log -n 30 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %s (%an)\"");
+            //buildSummary = Win32.ShellExecute(GitExePath, currentGitDir + "log -n 5 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %s (%an)\" --abbrev-commit");
+            //buildMessage = Win32.ShellExecute(GitExePath, currentGitDir + "log -1 --pretty=%B");
+            //
+            //log -n 5 --date=format:%Y-%m-%d --pretty=format:\"%C(green)[%cd]%Creset %C(bold blue)%an%Creset %<(65,trunc)%s%Creset %C(#696969)(%Creset%C(yellow)%h%Creset%C(#696969))%Creset\" --abbrev-commit
+            //log -n 5 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %an %s\" --abbrev-commit
+            //log -n 1 --date=format:%Y-%m-%d --pretty=format:\"[%cd] %an: %<(65,trunc)%s (%h)\" --abbrev-commi
+            //log -n 1800 --graph --pretty=format:\"%C(yellow)%h%Creset %C(bold blue)%an%Creset %s %C(dim green)(%cr)\" --abbrev-commit
+            //
+            // https://api.github.com/repos/processhacker/processhacker/branches
+            // https://api.github.com/repos/processhacker/processhacker/tags
+            // https://api.github.com/repos/processhacker/processhacker // created_at
+            // https://api.github.com/repos/processhacker/processhacker/compare/master@{created_at}...master
+            // https://api.github.com/repos/processhacker/processhacker/compare/master@{2016-01-01}...master
+            // https://api.github.com/repos/processhacker/processhacker/compare/master...v2.39
         }
 
         public static string BuildTimeStamp()
@@ -298,82 +315,6 @@ namespace CustomBuildTool
                         "bin\\Release32\\plugins\\ExtendedTools.pdb",
                         "bin\\Release64\\x86\\plugins\\ExtendedTools.pdb"
                         );
-                }
-            }
-            catch (Exception ex)
-            {
-                Program.PrintColorMessage("[ERROR] " + ex, ConsoleColor.Red);
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool CopyPluginSdkHeaders(BuildFlags Flags)
-        {
-            try
-            {
-                foreach (string folder in BuildConfig.Build_Sdk_Directories)
-                {
-                    if (!Directory.Exists(folder))
-                    {
-                        Directory.CreateDirectory(folder);
-                    }
-                }
-
-                Win32.CopyIfNewer("phlib\\mxml\\mxml.h", "sdk\\include\\mxml.h");
-
-                // Copy the plugin SDK headers
-                foreach (string file in BuildConfig.Build_Phnt_Headers)
-                    Win32.CopyIfNewer("phnt\\include\\" + file, "sdk\\include\\" + file);
-                foreach (string file in BuildConfig.Build_Phlib_Headers)
-                    Win32.CopyIfNewer("phlib\\include\\" + file, "sdk\\include\\" + file);
-
-                // Copy readme
-                Win32.CopyIfNewer("ProcessHacker\\sdk\\readme.txt", "sdk\\readme.txt");
-                // Copy symbols
-                Win32.CopyIfNewer("bin\\Release32\\ProcessHacker.pdb", "sdk\\dbg\\i386\\ProcessHacker.pdb");
-                Win32.CopyIfNewer("bin\\Release64\\ProcessHacker.pdb", "sdk\\dbg\\amd64\\ProcessHacker.pdb");
-                Win32.CopyIfNewer("KProcessHacker\\bin\\i386\\kprocesshacker.pdb", "sdk\\dbg\\i386\\kprocesshacker.pdb");
-                Win32.CopyIfNewer("KProcessHacker\\bin\\amd64\\kprocesshacker.pdb", "sdk\\dbg\\amd64\\kprocesshacker.pdb");
-                // Copy sample plugin
-                //Win32.CopyIfNewer("plugins\\SamplePlugin\\main.c", "sdk\\samples\\SamplePlugin\\main.c");
-                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.sln", "sdk\\samples\\SamplePlugin\\SamplePlugin.sln");
-                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.vcxproj", "sdk\\samples\\SamplePlugin\\SamplePlugin.vcxproj");
-                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.vcxproj.filters", "sdk\\samples\\SamplePlugin\\SamplePlugin.vcxproj.filters");
-                //Win32.CopyIfNewer("plugins\\SamplePlugin\\bin\\Release32\\SamplePlugin.dll", "sdk\\samples\\SamplePlugin\\bin\\Release32\\SamplePlugin.dll");
-
-                // Copy libs
-                if (Flags.HasFlag(BuildFlags.BuildDebug))
-                {
-                    if (Flags.HasFlag(BuildFlags.Build32bit))
-                        Win32.CopyIfNewer("bin\\Debug32\\ProcessHacker.lib", "sdk\\lib\\i386\\ProcessHacker.lib");
-                    if (Flags.HasFlag(BuildFlags.Build64bit))
-                        Win32.CopyIfNewer("bin\\Debug64\\ProcessHacker.lib", "sdk\\lib\\amd64\\ProcessHacker.lib");
-                }
-                else
-                {
-                    if (Flags.HasFlag(BuildFlags.Build32bit))
-                        Win32.CopyIfNewer("bin\\Release32\\ProcessHacker.lib", "sdk\\lib\\i386\\ProcessHacker.lib");
-                    if (Flags.HasFlag(BuildFlags.Build64bit))
-                        Win32.CopyIfNewer("bin\\Release64\\ProcessHacker.lib", "sdk\\lib\\amd64\\ProcessHacker.lib");
-                }
-
-                // Build the SDK
-                HeaderGen.Execute();
-
-                // Copy the resource header
-                Win32.CopyIfNewer("ProcessHacker\\sdk\\phapppub.h", "sdk\\include\\phapppub.h");
-                Win32.CopyIfNewer("ProcessHacker\\sdk\\phdk.h", "sdk\\include\\phdk.h");
-                Win32.CopyIfNewer("ProcessHacker\\resource.h", "sdk\\include\\phappresource.h");
-
-                // Append resource headers with SDK exports
-                string phappContent = File.ReadAllText("sdk\\include\\phappresource.h");
-
-                if (!string.IsNullOrWhiteSpace(phappContent))
-                {
-                    phappContent = phappContent.Replace("#define ID", "#define PHAPP_ID", StringComparison.OrdinalIgnoreCase);
-                    File.WriteAllText("sdk\\include\\phappresource.h", phappContent);
                 }
             }
             catch (Exception ex)
@@ -575,6 +516,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 if (File.Exists(BuildOutputFolder + "\\processhacker-build-websetup.exe"))
                     File.Delete(BuildOutputFolder + "\\processhacker-build-websetup.exe");
 
@@ -594,11 +537,76 @@ namespace CustomBuildTool
 
         public static bool BuildSdk(BuildFlags Flags)
         {
-            if (!CopyTextFiles())
-                return false;
+            try
+            {
+                foreach (string folder in BuildConfig.Build_Sdk_Directories)
+                {
+                    if (!Directory.Exists(folder))
+                    {
+                        Directory.CreateDirectory(folder);
+                    }
+                }
 
-            if (!CopyPluginSdkHeaders(Flags))
+                Win32.CopyIfNewer("phlib\\mxml\\mxml.h", "sdk\\include\\mxml.h");
+
+                // Copy the plugin SDK headers
+                foreach (string file in BuildConfig.Build_Phnt_Headers)
+                    Win32.CopyIfNewer("phnt\\include\\" + file, "sdk\\include\\" + file);
+                foreach (string file in BuildConfig.Build_Phlib_Headers)
+                    Win32.CopyIfNewer("phlib\\include\\" + file, "sdk\\include\\" + file);
+
+                // Copy readme
+                Win32.CopyIfNewer("ProcessHacker\\sdk\\readme.txt", "sdk\\readme.txt");
+                // Copy symbols
+                Win32.CopyIfNewer("bin\\Release32\\ProcessHacker.pdb", "sdk\\dbg\\i386\\ProcessHacker.pdb");
+                Win32.CopyIfNewer("bin\\Release64\\ProcessHacker.pdb", "sdk\\dbg\\amd64\\ProcessHacker.pdb");
+                Win32.CopyIfNewer("KProcessHacker\\bin\\i386\\kprocesshacker.pdb", "sdk\\dbg\\i386\\kprocesshacker.pdb");
+                Win32.CopyIfNewer("KProcessHacker\\bin\\amd64\\kprocesshacker.pdb", "sdk\\dbg\\amd64\\kprocesshacker.pdb");
+                // Copy sample plugin
+                //Win32.CopyIfNewer("plugins\\SamplePlugin\\main.c", "sdk\\samples\\SamplePlugin\\main.c");
+                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.sln", "sdk\\samples\\SamplePlugin\\SamplePlugin.sln");
+                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.vcxproj", "sdk\\samples\\SamplePlugin\\SamplePlugin.vcxproj");
+                //Win32.CopyIfNewer("plugins\\SamplePlugin\\SamplePlugin.vcxproj.filters", "sdk\\samples\\SamplePlugin\\SamplePlugin.vcxproj.filters");
+                //Win32.CopyIfNewer("plugins\\SamplePlugin\\bin\\Release32\\SamplePlugin.dll", "sdk\\samples\\SamplePlugin\\bin\\Release32\\SamplePlugin.dll");
+
+                // Copy libs
+                if (Flags.HasFlag(BuildFlags.BuildDebug))
+                {
+                    if (Flags.HasFlag(BuildFlags.Build32bit))
+                        Win32.CopyIfNewer("bin\\Debug32\\ProcessHacker.lib", "sdk\\lib\\i386\\ProcessHacker.lib");
+                    if (Flags.HasFlag(BuildFlags.Build64bit))
+                        Win32.CopyIfNewer("bin\\Debug64\\ProcessHacker.lib", "sdk\\lib\\amd64\\ProcessHacker.lib");
+                }
+                else
+                {
+                    if (Flags.HasFlag(BuildFlags.Build32bit))
+                        Win32.CopyIfNewer("bin\\Release32\\ProcessHacker.lib", "sdk\\lib\\i386\\ProcessHacker.lib");
+                    if (Flags.HasFlag(BuildFlags.Build64bit))
+                        Win32.CopyIfNewer("bin\\Release64\\ProcessHacker.lib", "sdk\\lib\\amd64\\ProcessHacker.lib");
+                }
+
+                // Build the SDK
+                HeaderGen.Execute();
+
+                // Copy the resource header
+                Win32.CopyIfNewer("ProcessHacker\\sdk\\phapppub.h", "sdk\\include\\phapppub.h");
+                Win32.CopyIfNewer("ProcessHacker\\sdk\\phdk.h", "sdk\\include\\phdk.h");
+                Win32.CopyIfNewer("ProcessHacker\\resource.h", "sdk\\include\\phappresource.h");
+
+                // Append resource headers with SDK exports
+                string phappContent = File.ReadAllText("sdk\\include\\phappresource.h");
+
+                if (!string.IsNullOrWhiteSpace(phappContent))
+                {
+                    phappContent = phappContent.Replace("#define ID", "#define PHAPP_ID", StringComparison.OrdinalIgnoreCase);
+                    File.WriteAllText("sdk\\include\\phappresource.h", phappContent);
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.PrintColorMessage("[ERROR] " + ex, ConsoleColor.Red);
                 return false;
+            }
 
             return true;
         }
@@ -613,6 +621,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 if (File.Exists(BuildOutputFolder + "\\processhacker-build-setup.exe"))
                     File.Delete(BuildOutputFolder + "\\processhacker-build-setup.exe");
 
@@ -642,6 +652,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 Zip.CreateCompressedSdkFromFolder("sdk", BuildOutputFolder + "\\processhacker-build-sdk.zip");
 
                 Program.PrintColorMessage(new FileInfo(BuildOutputFolder + "\\processhacker-build-sdk.zip").Length.ToPrettySize(), ConsoleColor.Green);
@@ -696,6 +708,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 if (File.Exists(BuildOutputFolder + "\\processhacker-build-bin.zip"))
                     File.Delete(BuildOutputFolder + "\\processhacker-build-bin.zip");
 
@@ -714,6 +728,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 if (File.Exists(BuildOutputFolder + "\\processhacker-build-bin.64"))
                     File.Delete(BuildOutputFolder + "\\processhacker-build-bin.64");
 
@@ -737,6 +753,8 @@ namespace CustomBuildTool
 
             try
             {
+                VisualStudio.CreateOutputDirectory();
+
                 Zip.CreateCompressedPdbFromFolder(
                     ".\\",
                     BuildOutputFolder + "\\processhacker-build-pdb.zip"
@@ -778,6 +796,8 @@ namespace CustomBuildTool
                         sb.AppendLine("SHA256: " + hash + Environment.NewLine);
                     }
                 }
+
+                VisualStudio.CreateOutputDirectory();
 
                 if (File.Exists(BuildOutputFolder + "\\processhacker-build-checksums.txt"))
                     File.Delete(BuildOutputFolder + "\\processhacker-build-checksums.txt");
@@ -914,9 +934,8 @@ namespace CustomBuildTool
                 return false;
             if (string.IsNullOrEmpty(BuildVersion))
                 return false;
-  
-            Program.PrintColorMessage(BuildTimeStamp(), ConsoleColor.DarkGray, false);
-            Program.PrintColorMessage("Building release signatures...", ConsoleColor.Cyan);
+
+            Program.PrintColorMessage(Environment.NewLine + "Uploading build artifacts... " + BuildVersion, ConsoleColor.Cyan);
 
             if (BuildNightly && !File.Exists(Verify.GetPath("nightly.key")))
             {
@@ -931,20 +950,6 @@ namespace CustomBuildTool
                 {
                     Program.PrintColorMessage("[SKIPPED] nightly.key not found.", ConsoleColor.Yellow);
                     return true;
-                }
-            }
-
-            foreach (BuildFile file in BuildConfig.Build_Release_Files)
-            {
-                if (!file.UploadNightly)
-                    continue;
-
-                string name = BuildOutputFolder + file.FileName;
-
-                if (!File.Exists(name))
-                {
-                    Program.PrintColorMessage("[SKIPPED] " + name + " not found.", ConsoleColor.Yellow);
-                    return false;
                 }
             }
 
@@ -964,17 +969,23 @@ namespace CustomBuildTool
             else
             {
                 Program.PrintColorMessage("[SKIPPED] CustomSignTool not found.", ConsoleColor.Yellow);
+                return true;
             }
 
             if (BuildNightly && File.Exists(Verify.GetPath("nightly.key")))
                 File.Delete(Verify.GetPath("nightly.key"));
 
             if (string.IsNullOrEmpty(BuildBinSig))
+            {
+                Program.PrintColorMessage("build-bin.sig not found.", ConsoleColor.Red);
                 return false;
+            }
             if (string.IsNullOrEmpty(BuildSetupSig))
+            {
+                Program.PrintColorMessage("build-setup.sig not found.", ConsoleColor.Red);
                 return false;
+            }
 
-            Program.PrintColorMessage("Uploading build artifacts... " + BuildVersion, ConsoleColor.Cyan);
             buildFilename = BuildOutputFolder + "\\processhacker-build-bin.zip";
 
             if (File.Exists(buildFilename))
@@ -984,7 +995,10 @@ namespace CustomBuildTool
             }
 
             if (string.IsNullOrEmpty(buildBinHash))
+            {
+                Program.PrintColorMessage("build-bin hash not found.", ConsoleColor.Red);
                 return false;
+            }
 
             buildFilename = BuildOutputFolder + "\\processhacker-build-setup.exe";
 
@@ -995,7 +1009,10 @@ namespace CustomBuildTool
             }
 
             if (string.IsNullOrEmpty(buildSetupHash))
+            {
+                Program.PrintColorMessage("build-setup hash not found.", ConsoleColor.Red);
                 return false;
+            }
 
             try
             {
