@@ -23,13 +23,12 @@ jobs:
       continue-on-error: true
       run: |
         msbuild ProcessHacker.sln /p:Configuration=Release /p:Platform=x64
+        copy /y D:\a\processhacker\processhacker\bin\Release64\*.* ..\..\sdk\lib\amd64
 
  
     - name: Build Plugins Extra   
       continue-on-error: true
       run: |
-        set UseEnv=true
-        set "LIB=D:\a\processhacker\processhacker\bin\Release64;%LIB%"
         msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64
         7z a -tzip -r plugins-extra_x64-release.zip ".\bin\Release64\plugins\*.dll" -x!SbieSupport.dll
 
