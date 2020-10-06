@@ -28,7 +28,7 @@ jobs:
     - name: Build Plugins Extra   
       continue-on-error: true
       run: |
-        msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64
+        msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64 /p:AdditionalLibPaths="D:\a\processhacker\processhacker\bin\Release64;"
         7z a -tzip -r plugins-extra_x64-release.zip ".\bin\Release64\plugins\*.dll" -x!SbieSupport.dll
 
     - name: Archive plugins artifacts
