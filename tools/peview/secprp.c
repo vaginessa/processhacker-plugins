@@ -26,8 +26,8 @@
 typedef enum _PV_IMAGE_CERT_CATEGORY
 {
     PV_IMAGE_CERT_CATEGORY_IMAGE,
-    PV_IMAGE_CERT_CATEGORY_EMBEDDED,
     PV_IMAGE_CERT_CATEGORY_ARRAY,
+    PV_IMAGE_CERT_CATEGORY_EMBEDDED,
     PV_IMAGE_CERT_CATEGORY_MAXIMUM
 } PV_IMAGE_CERT_CATEGORY;
 
@@ -37,7 +37,6 @@ typedef struct _PV_PE_CERTIFICATE_CONTEXT
     HWND ListViewHandle;
     HIMAGELIST ListViewImageList;
     ULONG Count;
-    ULONG ChainCount;
 } PV_PE_CERTIFICATE_CONTEXT, * PPV_PE_CERTIFICATE_CONTEXT;
 
 PPH_STRING PvpPeGetRelativeTimeString(
@@ -164,7 +163,10 @@ BOOLEAN PvpPeAddCertificateInfo(
                     INT lvItemIndex;
                     WCHAR number[PH_INT32_STR_LEN_1];
 
-                    PhPrintUInt32(number, ++Context->ChainCount);
+                    if (element->pCertContext == CertificateContext) // skip parent
+                        continue;
+
+                    PhPrintUInt32(number, ++Context->Count);
                     lvItemIndex = PhAddListViewGroupItem(
                         Context->ListViewHandle,
                         PV_IMAGE_CERT_CATEGORY_ARRAY,
@@ -176,6 +178,8 @@ BOOLEAN PvpPeAddCertificateInfo(
                     PvpPeAddCertificateInfo(Context, lvItemIndex, TRUE, element->pCertContext);
                 }
             }
+
+            //CertFreeCertificateChain(chainContext);
         }
     }
 
@@ -491,8 +495,8 @@ INT_PTR CALLBACK PvpPeSecurityDlgProc(
 
             ListView_EnableGroupView(context->ListViewHandle, TRUE);
             PhAddListViewGroup(context->ListViewHandle, PV_IMAGE_CERT_CATEGORY_IMAGE, L"Image certificates");
-            PhAddListViewGroup(context->ListViewHandle, PV_IMAGE_CERT_CATEGORY_EMBEDDED, L"Nested certificates");
             PhAddListViewGroup(context->ListViewHandle, PV_IMAGE_CERT_CATEGORY_ARRAY, L"Chained certificates");
+            PhAddListViewGroup(context->ListViewHandle, PV_IMAGE_CERT_CATEGORY_EMBEDDED, L"Nested certificates");
 
             PvpPeEnumerateFileCertificates(context);
 
