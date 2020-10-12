@@ -17,7 +17,7 @@ jobs:
         fetch-depth: 1
     #- run: git checkout HEAD
 
-    - uses: microsoft/setup-msbuild@v1.0.1 
+    - uses: microsoft/setup-msbuild@v1.0.2  
     
     - name: Build ProcessHacker
       continue-on-error: true
