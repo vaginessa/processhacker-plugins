@@ -23,8 +23,7 @@ jobs:
       continue-on-error: true
       run: |
         msbuild ProcessHacker.sln /p:Configuration=Release /p:Platform=x64
-        copy /y D:\a\processhacker\processhacker\bin\Release64\*.* ..\..\sdk\lib\amd64
-
+        copy /y bin\Release64\*.* sdk\lib\amd64\
  
     - name: Build Plugins Extra   
       continue-on-error: true
