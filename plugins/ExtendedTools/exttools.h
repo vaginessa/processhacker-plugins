@@ -733,7 +733,13 @@ ULONG64 EtLookupTotalGpuCommit(
 // Firewall
 
 extern BOOLEAN EtFwEnabled;
+extern ULONG EtFwStatus;
 extern ULONG FwRunCount;
+extern HANDLE EtFwEngineHandle;
+extern PH_CALLBACK FwItemAddedEvent;
+extern PH_CALLBACK FwItemModifiedEvent;
+extern PH_CALLBACK FwItemRemovedEvent;
+extern PH_CALLBACK FwItemsUpdatedEvent;
 
 typedef enum _FW_COLUMN_TYPE
 {
@@ -775,11 +781,22 @@ typedef struct _FW_EVENT_ITEM
     LIST_ENTRY AgeListEntry;
     ULONG AddTime;
     ULONG FreshTime;
-
     ULONG64 Index;
     LARGE_INTEGER AddedTime;
-    BOOLEAN Loopback;
-    BOOLEAN JustResolved;
+
+    union
+    {
+        BOOLEAN Flags;
+        struct
+        {
+            BOOLEAN Loopback : 1;
+            BOOLEAN HostNameLocalQuery : 1;
+            BOOLEAN HostNameRemoteQuery : 1;
+            BOOLEAN Spare : 5;
+        };
+    };
+
+    ULONG JustResolved;
 
     ULONG Direction;
     ULONG Type; // FWPM_NET_EVENT_TYPE
@@ -792,7 +809,6 @@ typedef struct _FW_EVENT_ITEM
     BOOLEAN ProcessIconValid;
 
     PPH_STRING ProcessFileName;
-    PPH_STRING ProcessFileNameWin32;
     PPH_STRING ProcessBaseString;
     PPH_STRING LocalAddressString;
     PPH_STRING RemoteAddressString;
@@ -811,12 +827,7 @@ typedef struct _FW_EVENT_ITEM
     PH_STRINGREF TextCache[FW_COLUMN_MAXIMUM];
 } FW_EVENT_ITEM, *PFW_EVENT_ITEM;
 
-extern PH_CALLBACK FwItemAddedEvent;
-extern PH_CALLBACK FwItemModifiedEvent;
-extern PH_CALLBACK FwItemRemovedEvent;
-extern PH_CALLBACK FwItemsUpdatedEvent;
-
-BOOLEAN EtFwStartMonitor(
+ULONG EtFwStartMonitor(
     VOID
     );
 VOID EtFwStopMonitor(

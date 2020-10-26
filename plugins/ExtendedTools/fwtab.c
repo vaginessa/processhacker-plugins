@@ -42,6 +42,8 @@ PH_TN_FILTER_SUPPORT EtFwFilterSupport;
 PTOOLSTATUS_INTERFACE EtFwToolStatusInterface;
 PH_CALLBACK_REGISTRATION EtFwSearchChangedRegistration;
 BOOLEAN EtFwEnabled = FALSE;
+ULONG EtFwStatus = ERROR_SUCCESS;
+PPH_STRING EtFwStatusText = NULL;
 PPH_LIST FwNodeList = NULL;
 
 HWND NTAPI EtpToolStatusGetTreeNewHandle(
@@ -100,7 +102,33 @@ BOOLEAN FwTabPageCallback(
 
             if (!EtFwEnabled)
             {
-                TreeNew_SetEmptyText(hwnd, &FwTreeEmptyText, 0);
+                if (EtFwStatus != ERROR_SUCCESS)
+                {
+                    PPH_STRING statusMessage;
+
+                    if (statusMessage = PhGetStatusMessage(0, EtFwStatus))
+                    {
+                        EtFwStatusText = PhFormatString(
+                            L"%s %s (%lu)",
+                            L"Unable to start the firewall event tracing session: ",
+                            statusMessage->Buffer,
+                            EtFwStatus);
+                        PhDereferenceObject(statusMessage);
+                    }
+                    else
+                    {
+                        EtFwStatusText = PhFormatString(
+                            L"%s (%lu)",
+                            L"Unable to start the firewall event tracing session: ",
+                            EtFwStatus);
+                    }
+
+                    TreeNew_SetEmptyText(hwnd, &EtFwStatusText->sr, 0);
+                }
+                else
+                {
+                    TreeNew_SetEmptyText(hwnd, &FwTreeEmptyText, 0);
+                }
             }
 
             PhRegisterCallback(
@@ -606,7 +634,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
                 getCellText->Text = PhGetStringRef(node->RuleDescription);
                 break;
             case FW_COLUMN_PROCESSFILENAME:
-                getCellText->Text = PhGetStringRef(node->ProcessFileNameWin32);
+                getCellText->Text = PhGetStringRef(node->ProcessFileName);
                 break;
             case FW_COLUMN_LOCALADDRESS:
                 getCellText->Text = PhGetStringRef(node->LocalAddressString);
@@ -856,7 +884,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
         return TRUE;
     case TreeNewLeftDoubleClick:
         {
-            EtFwHandleFwCommand(WindowHandle, ID_DISK_OPENFILELOCATION);
+            EtFwHandleFwCommand(WindowHandle, ID_DISK_INSPECT);
         }
         return TRUE;
     case TreeNewContextMenu:

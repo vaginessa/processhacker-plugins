@@ -21,20 +21,27 @@
  */
 
 #include "exttools.h"
+#include <workqueue.h>
 #include <fwpmu.h>
 #include <fwpsu.h>
 
 PH_CALLBACK_REGISTRATION EtFwProcessesUpdatedCallbackRegistration;
 PPH_OBJECT_TYPE FwObjectType = NULL;
-HANDLE FwEngineHandle = NULL;
+HANDLE EtFwEngineHandle = NULL;
 HANDLE FwEventHandle = NULL;
-HANDLE FwEnumHandle = NULL;
 ULONG FwRunCount = 0;
 ULONG FwMaxEventAge = 60;
 SLIST_HEADER FwPacketListHead;
 LIST_ENTRY FwAgeListHead = { &FwAgeListHead, &FwAgeListHead };
 _FwpmNetEventSubscribe FwpmNetEventSubscribe_I = NULL;
 PPH_HASHTABLE EtFwResolveCacheHashtable = NULL;
+
+BOOLEAN EtFwEnableResolveCache = TRUE;
+PH_INITONCE EtFwWorkQueueInitOnce = PH_INITONCE_INIT;
+PH_WORK_QUEUE EtFwWorkQueue;
+SLIST_HEADER EtFwQueryListHead;
+static PPH_HASHTABLE EtFwCacheHashtable = NULL;
+static PH_QUEUED_LOCK EtFwCacheHashtableLock = PH_QUEUED_LOCK_INIT;
 
 PH_CALLBACK_DECLARE(FwItemAddedEvent);
 PH_CALLBACK_DECLARE(FwItemModifiedEvent);
@@ -44,7 +51,7 @@ PH_CALLBACK_DECLARE(FwItemsUpdatedEvent);
 typedef struct _FW_EVENT
 {
     FWPM_NET_EVENT_TYPE Type;
-    BOOL IsLoopback;
+    ULONG IsLoopback;
     ULONG Direction;
     ULONG ProcessId;
     ULONG IpProtocol;
@@ -63,7 +70,6 @@ typedef struct _FW_EVENT
     PPH_STRING RuleLayerDescription;
 
     PPH_STRING ProcessFileName;
-    PPH_STRING ProcessFileNameWin32;
     PPH_STRING ProcessBaseString;
 
     PPH_PROCESS_ITEM ProcessItem;
@@ -80,6 +86,20 @@ typedef struct _FW_RESOLVE_CACHE_ITEM
     PH_IP_ADDRESS Address;
     PPH_STRING HostString;
 } FW_RESOLVE_CACHE_ITEM, *PFW_RESOLVE_CACHE_ITEM;
+
+typedef struct _FW_ITEM_QUERY_DATA
+{
+    SLIST_ENTRY ListEntry;
+    PFW_EVENT_ITEM EventItem;
+
+    PH_IP_ADDRESS Address;
+    BOOLEAN Remote;
+    PPH_STRING HostString;
+} FW_ITEM_QUERY_DATA, *PFW_ITEM_QUERY_DATA;
+
+VOID PhpQueryHostnameForEntry(
+    _In_ PFW_EVENT_ITEM Entry
+    );
 
 BOOLEAN EtFwResolveCacheHashtableEqualFunction(
     _In_ PVOID Entry1,
@@ -130,12 +150,8 @@ VOID NTAPI FwObjectTypeDeleteProcedure(
 {
     PFW_EVENT_ITEM event = Object;
 
-    if (event->TimeString)
-        PhDereferenceObject(event->TimeString);
     if (event->ProcessFileName)
         PhDereferenceObject(event->ProcessFileName);
-    if (event->ProcessFileNameWin32)
-        PhDereferenceObject(event->ProcessFileNameWin32);
     if (event->ProcessBaseString)
         PhDereferenceObject(event->ProcessBaseString);
     if (event->LocalAddressString)
@@ -212,7 +228,6 @@ VOID FwProcessFirewallEvent(
     entry->RemoteHostnameString = diskEvent->RemoteHostnameString;
 
     entry->ProcessFileName = diskEvent->ProcessFileName;
-    entry->ProcessFileNameWin32 = diskEvent->ProcessFileNameWin32;
     entry->ProcessBaseString = diskEvent->ProcessBaseString;
     entry->ProcessItem = diskEvent->ProcessItem;
 
@@ -232,7 +247,7 @@ VOID FwProcessFirewallEvent(
     entry->FreshTime = RunId;
     InsertHeadList(&FwAgeListHead, &entry->AgeListEntry);
 
-    PhReferenceObject(entry);
+    PhpQueryHostnameForEntry(entry);
 
     // Raise the item added event.
     PhInvokeCallback(&FwItemAddedEvent, entry);
@@ -274,7 +289,7 @@ BOOLEAN FwProcessEventType(
                 return FALSE;
             }
 
-            if (fwDropEvent->layerId && FwpmLayerGetById(FwEngineHandle, fwDropEvent->layerId, &fwLayerItem) == ERROR_SUCCESS)
+            if (fwDropEvent->layerId && FwpmLayerGetById(EtFwEngineHandle, fwDropEvent->layerId, &fwLayerItem) == ERROR_SUCCESS)
             {
                 if (
                     IsEqualGUID(&fwLayerItem->layerKey, &FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4) ||
@@ -295,7 +310,7 @@ BOOLEAN FwProcessEventType(
                 FwpmFreeMemory(&fwLayerItem);
             }
 
-            if (fwDropEvent->filterId && FwpmFilterGetById(FwEngineHandle, fwDropEvent->filterId, &fwFilterItem) == ERROR_SUCCESS)
+            if (fwDropEvent->filterId && FwpmFilterGetById(EtFwEngineHandle, fwDropEvent->filterId, &fwFilterItem) == ERROR_SUCCESS)
             {
                 if (RuleName && fwFilterItem->displayData.name)
                     *RuleName = PhCreateString(fwFilterItem->displayData.name);
@@ -329,7 +344,7 @@ BOOLEAN FwProcessEventType(
                 return FALSE;
             }
 
-            if (fwAllowEvent->layerId && FwpmLayerGetById(FwEngineHandle, fwAllowEvent->layerId, &fwLayerItem) == ERROR_SUCCESS)
+            if (fwAllowEvent->layerId && FwpmLayerGetById(EtFwEngineHandle, fwAllowEvent->layerId, &fwLayerItem) == ERROR_SUCCESS)
             {
                 if (
                     IsEqualGUID(&fwLayerItem->layerKey, &FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4) ||
@@ -350,7 +365,7 @@ BOOLEAN FwProcessEventType(
                 FwpmFreeMemory(&fwLayerItem);
             }
 
-            if (fwAllowEvent->filterId && FwpmFilterGetById(FwEngineHandle, fwAllowEvent->filterId, &fwFilterItem) == ERROR_SUCCESS)
+            if (fwAllowEvent->filterId && FwpmFilterGetById(EtFwEngineHandle, fwAllowEvent->filterId, &fwFilterItem) == ERROR_SUCCESS)
             {
                 if (RuleName && fwFilterItem->displayData.name)
                     *RuleName = PhCreateString(fwFilterItem->displayData.name);
@@ -360,7 +375,6 @@ BOOLEAN FwProcessEventType(
                 FwpmFreeMemory(&fwFilterItem);
             }
         }
-
         return TRUE;
     }
 
@@ -449,8 +463,117 @@ PPH_STRING EtFwGetNameFromAddress(
     return addressEndpointString;
 }
 
+NTSTATUS EtFwNetworkItemQueryWorker(
+    _In_ PVOID Parameter
+    )
+{
+    PFW_ITEM_QUERY_DATA data = (PFW_ITEM_QUERY_DATA)Parameter;
+    PPH_STRING hostString;
+    PFW_RESOLVE_CACHE_ITEM cacheItem;
+
+    // Last minute check of the cache.
+
+    PhAcquireQueuedLockShared(&EtFwCacheHashtableLock);
+    cacheItem = EtFwLookupResolveCacheItem(&data->Address);
+    PhReleaseQueuedLockShared(&EtFwCacheHashtableLock);
+
+    if (!cacheItem)
+    {
+        hostString = EtFwGetNameFromAddress(&data->Address);
+
+        if (hostString)
+        {
+            data->HostString = hostString;
+
+            // Update the cache.
+
+            PhAcquireQueuedLockExclusive(&EtFwCacheHashtableLock);
+
+            cacheItem = EtFwLookupResolveCacheItem(&data->Address);
+
+            if (!cacheItem)
+            {
+                cacheItem = PhAllocateZero(sizeof(FW_RESOLVE_CACHE_ITEM));
+                cacheItem->Address = data->Address;
+                cacheItem->HostString = hostString;
+                PhReferenceObject(hostString);
+
+                PhAddEntryHashtable(EtFwResolveCacheHashtable, &cacheItem);
+            }
+
+            PhReleaseQueuedLockExclusive(&EtFwCacheHashtableLock);
+        }
+    }
+    else
+    {
+        PhReferenceObject(cacheItem->HostString);
+        data->HostString = cacheItem->HostString;
+    }
+
+    RtlInterlockedPushEntrySList(&EtFwQueryListHead, &data->ListEntry);
+
+    return STATUS_SUCCESS;
+}
+
+VOID EtFwQueueNetworkItemQuery(
+    _In_ PFW_EVENT_ITEM EventItem,
+    _In_ BOOLEAN Remote
+    )
+{
+    PFW_ITEM_QUERY_DATA data;
+
+    if (!EtFwEnableResolveCache)
+        return;
+
+    data = PhAllocateZero(sizeof(FW_ITEM_QUERY_DATA));
+    data->EventItem = PhReferenceObject(EventItem);
+    data->Remote = Remote;
+
+    if (Remote)
+        data->Address = EventItem->RemoteEndpoint.Address;
+    else
+        data->Address = EventItem->LocalEndpoint.Address;
+
+    if (PhBeginInitOnce(&EtFwWorkQueueInitOnce))
+    {
+        PhInitializeWorkQueue(&EtFwWorkQueue, 0, 3, 500);
+        PhEndInitOnce(&EtFwWorkQueueInitOnce);
+    }
+
+    PhQueueItemWorkQueue(&EtFwWorkQueue, EtFwNetworkItemQueryWorker, data);
+}
+
+VOID EtFwFlushHostNameData(
+    VOID
+    )
+{
+    PSLIST_ENTRY entry;
+    PFW_ITEM_QUERY_DATA data;
+
+    if (!RtlFirstEntrySList(&EtFwQueryListHead))
+        return;
+
+    entry = RtlInterlockedFlushSList(&EtFwQueryListHead);
+
+    while (entry)
+    {
+        data = CONTAINING_RECORD(entry, FW_ITEM_QUERY_DATA, ListEntry);
+        entry = entry->Next;
+
+        if (data->Remote)
+            PhMoveReference(&data->EventItem->RemoteHostnameString, data->HostString);
+        else
+            PhMoveReference(&data->EventItem->LocalHostnameString, data->HostString);
+
+        data->EventItem->JustResolved = TRUE;
+
+        PhDereferenceObject(data->EventItem);
+        PhFree(data);
+    }
+}
+
 VOID PhpQueryHostnameForEntry(
-    _In_ PFW_EVENT Entry
+    _In_ PFW_EVENT_ITEM Entry
     )
 {
     PFW_RESOLVE_CACHE_ITEM cacheItem;
@@ -480,122 +603,44 @@ VOID PhpQueryHostnameForEntry(
     // Local
     if (!PhIsNullIpAddress(&Entry->LocalEndpoint.Address))
     {
-        if (cacheItem = EtFwLookupResolveCacheItem(&Entry->LocalEndpoint.Address))
+        PhAcquireQueuedLockShared(&EtFwCacheHashtableLock);
+        cacheItem = EtFwLookupResolveCacheItem(&Entry->LocalEndpoint.Address);
+        PhReleaseQueuedLockShared(&EtFwCacheHashtableLock);
+
+        if (cacheItem)
         {
             PhReferenceObject(cacheItem->HostString);
             Entry->LocalHostnameString = cacheItem->HostString;
         }
         else
         {
-            cacheItem = PhAllocateZero(sizeof(FW_RESOLVE_CACHE_ITEM));
-            cacheItem->Address = Entry->LocalEndpoint.Address;
-
-            switch (Entry->LocalEndpoint.Address.Type)
+            if (!Entry->HostNameLocalQuery)
             {
-            case PH_IPV4_NETWORK_TYPE:
-                {
-                    if (IN4_IS_ADDR_UNSPECIFIED(&Entry->LocalEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"UNSPECIFIED");
-                    }
-                    else if (IN4_IS_ADDR_LOOPBACK(&Entry->LocalEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"LOOPBACK");
-                    }
-                    else if (IN4_IS_ADDR_BROADCAST(&Entry->LocalEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"BROADCAST");
-                    }
-                }
-                break;
-            case PH_IPV6_NETWORK_TYPE:
-                {
-                    if (IN6_IS_ADDR_UNSPECIFIED(&Entry->LocalEndpoint.Address.In6Addr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"UNSPECIFIED");
-                    }
-                    else if (IN6_IS_ADDR_LOOPBACK(&Entry->LocalEndpoint.Address.In6Addr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"LOOPBACK");
-                    }
-                }
-                break;
+                EtFwQueueNetworkItemQuery(Entry, FALSE);
+                Entry->HostNameLocalQuery = TRUE;
             }
-
-            if (!cacheItem->HostString)
-            {
-                cacheItem->HostString = EtFwGetNameFromAddress(&Entry->LocalEndpoint.Address);
-            }
-
-            if (!cacheItem->HostString)
-            {
-                cacheItem->HostString = PhReferenceEmptyString();
-                PhReferenceObject(cacheItem->HostString);
-            }
-
-            PhAddEntryHashtable(EtFwResolveCacheHashtable, &cacheItem);
-            Entry->LocalHostnameString = cacheItem->HostString;
         }
     }
 
     // Remote
     if (!PhIsNullIpAddress(&Entry->RemoteEndpoint.Address))
     {
-        if (cacheItem = EtFwLookupResolveCacheItem(&Entry->RemoteEndpoint.Address))
+        PhAcquireQueuedLockShared(&EtFwCacheHashtableLock);
+        cacheItem = EtFwLookupResolveCacheItem(&Entry->RemoteEndpoint.Address);
+        PhReleaseQueuedLockShared(&EtFwCacheHashtableLock);
+
+        if (cacheItem)
         {
             PhReferenceObject(cacheItem->HostString);
             Entry->RemoteHostnameString = cacheItem->HostString;
         }
         else
         {
-            cacheItem = PhAllocateZero(sizeof(FW_RESOLVE_CACHE_ITEM));
-            cacheItem->Address = Entry->RemoteEndpoint.Address;
-
-            switch (Entry->RemoteEndpoint.Address.Type)
+            if (!Entry->HostNameRemoteQuery)
             {
-            case PH_IPV4_NETWORK_TYPE:
-                {
-                    if (IN4_IS_ADDR_UNSPECIFIED(&Entry->RemoteEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"UNSPECIFIED");
-                    }
-                    else if (IN4_IS_ADDR_LOOPBACK(&Entry->RemoteEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"LOOPBACK");
-                    }
-                    else if (IN4_IS_ADDR_BROADCAST(&Entry->RemoteEndpoint.Address.InAddr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"BROADCAST");
-                    }
-                }
-                break;
-            case PH_IPV6_NETWORK_TYPE:
-                {
-                    if (IN6_IS_ADDR_UNSPECIFIED(&Entry->RemoteEndpoint.Address.In6Addr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"UNSPECIFIED");
-                    }
-                    else if (IN6_IS_ADDR_LOOPBACK(&Entry->RemoteEndpoint.Address.In6Addr))
-                    {
-                        cacheItem->HostString = PhCreateString(L"LOOPBACK");
-                    }
-                }
-                break;
+                EtFwQueueNetworkItemQuery(Entry, TRUE);
+                Entry->HostNameRemoteQuery = TRUE;
             }
-
-            if (!cacheItem->HostString)
-            {
-                cacheItem->HostString = EtFwGetNameFromAddress(&Entry->RemoteEndpoint.Address);
-            }
-
-            if (!cacheItem->HostString)
-            {
-                cacheItem->HostString = PhReferenceEmptyString();
-                PhReferenceObject(cacheItem->HostString);
-            }
-
-            PhAddEntryHashtable(EtFwResolveCacheHashtable, &cacheItem);
-            Entry->RemoteHostnameString = cacheItem->HostString;
         }
     }
 }
@@ -612,6 +657,9 @@ VOID CALLBACK FwEventCallback(
     PPH_STRING ruleDescription = NULL;
     PPH_STRING ruleLayerName = NULL;
     PPH_STRING ruleLayerDescription = NULL;
+
+    if (!EtFwEnabled)
+        return;
 
     if (!FwProcessEventType(
         FwEvent,
@@ -635,7 +683,6 @@ VOID CALLBACK FwEventCallback(
     entry.RuleLayerName = ruleLayerName;
     entry.RuleLayerDescription = ruleLayerDescription;
     entry.IpProtocol = FwEvent->header.ipProtocol;
-
 
     if (FwEvent->header.flags & FWPM_NET_EVENT_FLAG_IP_VERSION_SET)
     {
@@ -670,8 +717,6 @@ VOID CALLBACK FwEventCallback(
                     entry.RemoteAddressString = PhCreateStringEx(ipvAddressString, ipvAddressStringLength * sizeof(WCHAR));
                 }
             }
-
-            PhpQueryHostnameForEntry(&entry);
         }
         else if (FwEvent->header.ipVersion == FWP_IP_VERSION_V6)
         {
@@ -703,8 +748,6 @@ VOID CALLBACK FwEventCallback(
                     entry.RemoteAddressString = PhCreateStringEx(ipvAddressString, ipvAddressStringLength * sizeof(WCHAR));
                 }
             }
-
-            PhpQueryHostnameForEntry(&entry);
         }
     }
 
@@ -722,7 +765,6 @@ VOID CALLBACK FwEventCallback(
             PVOID processes;
             PSYSTEM_PROCESS_INFORMATION processInfo;
 
-            entry.ProcessFileNameWin32 = entry.ProcessFileName;
             entry.ProcessBaseString = PhGetBaseName(entry.ProcessFileName);
 
             if (entry.ProcessBaseString && NT_SUCCESS(PhEnumProcesses(&processes)))
@@ -803,6 +845,29 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
         PhFree(packet);
     }
 
+    // merge into below loop
+
+    EtFwFlushHostNameData();
+
+    ageListEntry = FwAgeListHead.Blink;
+
+    while (ageListEntry != &FwAgeListHead)
+    {
+        PFW_EVENT_ITEM item;
+        BOOLEAN modified = FALSE;
+
+        item = CONTAINING_RECORD(ageListEntry, FW_EVENT_ITEM, AgeListEntry);
+        ageListEntry = ageListEntry->Blink;
+
+        if (InterlockedExchange(&item->JustResolved, 0) != 0)
+            modified = TRUE;
+
+        if (modified)
+        {
+            PhInvokeCallback(&FwItemModifiedEvent, item);
+        }
+    }
+
     // Remove old entries.
 
     ageListEntry = FwAgeListHead.Blink;
@@ -825,17 +890,19 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
     FwRunCount++;
 }
 
-BOOLEAN EtFwStartMonitor(
+ULONG EtFwStartMonitor(
     VOID
     )
 {
     PVOID moduleHandle;
+    ULONG status;
     FWP_VALUE value = { FWP_EMPTY };
     FWPM_SESSION session = { 0 };
     FWPM_NET_EVENT_SUBSCRIPTION subscription = { 0 };
     FWPM_NET_EVENT_ENUM_TEMPLATE eventTemplate = { 0 };
 
     RtlInitializeSListHead(&FwPacketListHead);
+    RtlInitializeSListHead(&EtFwQueryListHead);
     FwObjectType = PhCreateObjectType(L"FwObject", 0, FwObjectTypeDeleteProcedure);
     EtFwResolveCacheHashtable = PhCreateHashtable(
         sizeof(FW_RESOLVE_CACHE_ITEM),
@@ -845,7 +912,7 @@ BOOLEAN EtFwStartMonitor(
         );
 
     if (!(moduleHandle = LoadLibrary(L"fwpuclnt.dll")))
-        return FALSE;
+        return GetLastError();
     if (!FwpmNetEventSubscribe_I)
         FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe4", 0);
     if (!FwpmNetEventSubscribe_I)
@@ -855,63 +922,51 @@ BOOLEAN EtFwStartMonitor(
     if (!FwpmNetEventSubscribe_I)
         FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe1", 0);
     if (!FwpmNetEventSubscribe_I)
-        return FALSE;
+        return ERROR_PROC_NOT_FOUND;
 
     session.flags = 0;// FWPM_SESSION_FLAG_DYNAMIC;
     session.displayData.name  = L"PhFwSession";
     session.displayData.description = L"";
 
     // Create a non-dynamic BFE session
+    status = FwpmEngineOpen(
+        NULL,
+        RPC_C_AUTHN_WINNT,
+        NULL,
+        &session,
+        &EtFwEngineHandle
+        );
 
-    if (FwpmEngineOpen(
-        NULL, 
-        RPC_C_AUTHN_WINNT, 
-        NULL, 
-        &session, 
-        &FwEngineHandle
-        ) != ERROR_SUCCESS)
-    {
-        return FALSE;
-    }
+    if (status != ERROR_SUCCESS)
+        return status;
 
     // Enable collection of NetEvents
 
     value.type = FWP_UINT32;
     value.uint32 = 1;
 
-    if (FwpmEngineSetOption(
-        FwEngineHandle,
-        FWPM_ENGINE_COLLECT_NET_EVENTS,
-        &value
-        ) != ERROR_SUCCESS)
-    {
-        return FALSE;
-    }
+    status = FwpmEngineSetOption(EtFwEngineHandle, FWPM_ENGINE_COLLECT_NET_EVENTS, &value);
+
+    if (status != ERROR_SUCCESS)
+        return status;
 
     if (WindowsVersion >= WINDOWS_8)
     {
         value.type = FWP_UINT32;
         value.uint32 =
-            FWPM_NET_EVENT_KEYWORD_CAPABILITY_DROP |
-            FWPM_NET_EVENT_KEYWORD_CAPABILITY_ALLOW |
-            FWPM_NET_EVENT_KEYWORD_CLASSIFY_ALLOW |
-            FWPM_NET_EVENT_KEYWORD_INBOUND_MCAST |
-            FWPM_NET_EVENT_KEYWORD_INBOUND_BCAST |
-            FWPM_NET_EVENT_KEYWORD_PORT_SCANNING_DROP;
+            FWPM_NET_EVENT_KEYWORD_CAPABILITY_DROP | FWPM_NET_EVENT_KEYWORD_CAPABILITY_ALLOW |
+            FWPM_NET_EVENT_KEYWORD_CLASSIFY_ALLOW | FWPM_NET_EVENT_KEYWORD_INBOUND_MCAST |
+            FWPM_NET_EVENT_KEYWORD_INBOUND_BCAST;
 
-        if (FwpmEngineSetOption(
-            FwEngineHandle,
-            FWPM_ENGINE_NET_EVENT_MATCH_ANY_KEYWORDS,
-            &value
-            ) != ERROR_SUCCESS)
-        {
-            return FALSE;
-        }
+        if (WindowsVersion >= WINDOWS_10_19H1)
+            value.uint32 |= FWPM_NET_EVENT_KEYWORD_PORT_SCANNING_DROP;
+
+        FwpmEngineSetOption(EtFwEngineHandle, FWPM_ENGINE_NET_EVENT_MATCH_ANY_KEYWORDS, &value);
 
         value.type = FWP_UINT32;
         value.uint32 = 1;
 
-        FwpmEngineSetOption(FwEngineHandle, FWPM_ENGINE_MONITOR_IPSEC_CONNECTIONS, &value);
+        FwpmEngineSetOption(EtFwEngineHandle, FWPM_ENGINE_MONITOR_IPSEC_CONNECTIONS, &value);
     }
 
     eventTemplate.numFilterConditions = 0; // get events for all conditions
@@ -920,16 +975,16 @@ BOOLEAN EtFwStartMonitor(
 
     // Subscribe to the events
 
-    if (FwpmNetEventSubscribe_I(
-        FwEngineHandle,
+    status = FwpmNetEventSubscribe_I(
+        EtFwEngineHandle,
         &subscription,
         FwEventCallback,
         NULL,
         &FwEventHandle
-        ) != ERROR_SUCCESS)
-    {
-        return FALSE;
-    }
+        );
+
+    if (status != ERROR_SUCCESS)
+        return status;
 
     PhRegisterCallback(
         PhGetGeneralCallback(GeneralCallbackProcessProviderUpdatedEvent),
@@ -938,7 +993,7 @@ BOOLEAN EtFwStartMonitor(
         &EtFwProcessesUpdatedCallbackRegistration
         );
 
-    return TRUE;
+    return ERROR_SUCCESS;
 }
 
 VOID EtFwStopMonitor(
@@ -947,11 +1002,11 @@ VOID EtFwStopMonitor(
 {
     if (FwEventHandle)
     {
-        FwpmNetEventUnsubscribe(FwEngineHandle, FwEventHandle);
+        FwpmNetEventUnsubscribe(EtFwEngineHandle, FwEventHandle);
         FwEventHandle = NULL;
     }
 
-    if (FwEngineHandle)
+    if (EtFwEngineHandle)
     {
         FWP_VALUE value = { FWP_EMPTY };
 
@@ -960,9 +1015,9 @@ VOID EtFwStopMonitor(
         value.type = FWP_UINT32;
         value.uint32 = 0;
 
-        FwpmEngineSetOption(FwEngineHandle, FWPM_ENGINE_COLLECT_NET_EVENTS, &value);
+        FwpmEngineSetOption(EtFwEngineHandle, FWPM_ENGINE_COLLECT_NET_EVENTS, &value);
 
-        FwpmEngineClose(FwEngineHandle);
-        FwEngineHandle = NULL;
+        FwpmEngineClose(EtFwEngineHandle);
+        EtFwEngineHandle = NULL;
     }
 }
