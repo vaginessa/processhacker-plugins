@@ -96,6 +96,12 @@ BOOLEAN FwTabPageCallback(
 
             FwTreeNewCreated = TRUE;
 
+            if (PhGetIntegerSetting(L"EnableThemeSupport"))
+            {
+                PhInitializeThemeWindowHeader(TreeNew_GetHeader(hwnd)); // HACK (dmex)
+                TreeNew_ThemeSupport(hwnd, TRUE);
+            }
+
             PhInitializeProviderEventQueue(&FwNetworkEventQueue, 100);
 
             InitializeFwTreeList(hwnd);
@@ -257,8 +263,9 @@ VOID InitializeFwTreeList(
     PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_REMOTEHOSTNAME, TRUE, L"Remote hostname", 70, PH_ALIGN_LEFT, FW_COLUMN_REMOTEHOSTNAME, 0);
     PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_PROTOCOL, TRUE, L"Protocol", 60, PH_ALIGN_LEFT, FW_COLUMN_PROTOCOL, 0);
     PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_TIMESTAMP, TRUE, L"Timestamp", 60, PH_ALIGN_LEFT, FW_COLUMN_TIMESTAMP, 0);
-    PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_PROCESSFILENAME, FALSE, L"File path", 80, PH_ALIGN_LEFT, FW_COLUMN_PROCESSFILENAME, DT_PATH_ELLIPSIS);
-    PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_USER, FALSE, L"Username", 60, PH_ALIGN_LEFT, FW_COLUMN_USER, 0);
+    PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_PROCESSFILENAME, FALSE, L"File path", 100, PH_ALIGN_LEFT, FW_COLUMN_PROCESSFILENAME, DT_PATH_ELLIPSIS);
+    PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_USER, FALSE, L"Username", 100, PH_ALIGN_LEFT, FW_COLUMN_USER, 0);
+    //PhAddTreeNewColumn(FwTreeNewHandle, FW_COLUMN_PACKAGE, FALSE, L"Package", 100, PH_ALIGN_LEFT, FW_COLUMN_PACKAGE, 0);
     PhAddTreeNewColumnEx2(FwTreeNewHandle, FW_COLUMN_COUNTRY, FALSE, L"Country", 80, PH_ALIGN_LEFT, FW_COLUMN_COUNTRY, 0, TN_COLUMN_FLAG_CUSTOMDRAW);
 
     LoadSettingsFwTreeList();
@@ -498,6 +505,12 @@ BEGIN_SORT_FUNCTION(Filename)
 }
 END_SORT_FUNCTION
 
+BEGIN_SORT_FUNCTION(User)
+{
+    sortResult = PhCompareStringWithNull(node1->UserName, node2->UserName, TRUE);
+}
+END_SORT_FUNCTION
+
 BEGIN_SORT_FUNCTION(Country)
 {
     sortResult = PhCompareStringWithNull(node1->RemoteCountryName, node2->RemoteCountryName, TRUE);
@@ -543,6 +556,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
                     SORT_FUNCTION(Protocal),
                     SORT_FUNCTION(Timestamp),
                     SORT_FUNCTION(Filename),
+                    SORT_FUNCTION(User),
                     SORT_FUNCTION(Country),
                 };
                 int (__cdecl *sortFunction)(const void*, const void*);
@@ -679,7 +693,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
                         {
                             ULONG ipvAddressStringLength = INET6_ADDRSTRLEN;
 
-                            if (NT_SUCCESS(RtlIpv6AddressToStringEx((PIN6_ADDR)&node->LocalEndpoint.Address.Ipv6, 0, 0, node->LocalAddressString, &ipvAddressStringLength)))
+                            if (NT_SUCCESS(RtlIpv6AddressToStringEx((PIN6_ADDR)&node->LocalEndpoint.Address.Ipv6, node->ScopeId, 0, node->LocalAddressString, &ipvAddressStringLength)))
                             {
                                 getCellText->Text.Buffer = node->LocalAddressString;
                                 getCellText->Text.Length = ipvAddressStringLength * sizeof(WCHAR);
@@ -707,7 +721,16 @@ BOOLEAN NTAPI FwTreeNewCallback(
                 }
                 break;
             case FW_COLUMN_LOCALHOSTNAME:
-                getCellText->Text = PhGetStringRef(node->LocalHostnameString);
+                {
+                    if (node->LocalHostnameString)
+                    {
+                        getCellText->Text = PhGetStringRef(node->LocalHostnameString);
+                    }
+                    else
+                    {
+                        PhInitializeStringRef(&getCellText->Text, L"Resolving....");
+                    }
+                }
                 break;
             case FW_COLUMN_REMOTEADDRESS:
                 {
@@ -728,7 +751,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
                         {
                             ULONG ipvAddressStringLength = INET6_ADDRSTRLEN;
 
-                            if (NT_SUCCESS(RtlIpv6AddressToStringEx((PIN6_ADDR)&node->RemoteEndpoint.Address.Ipv6, 0, 0, node->RemoteAddressString, &ipvAddressStringLength)))
+                            if (NT_SUCCESS(RtlIpv6AddressToStringEx((PIN6_ADDR)&node->RemoteEndpoint.Address.Ipv6, node->ScopeId, 0, node->RemoteAddressString, &ipvAddressStringLength)))
                             {
                                 getCellText->Text.Buffer = node->RemoteAddressString;
                                 getCellText->Text.Length = ipvAddressStringLength * sizeof(WCHAR);
@@ -756,7 +779,16 @@ BOOLEAN NTAPI FwTreeNewCallback(
                 }
                 break;
             case FW_COLUMN_REMOTEHOSTNAME:
-                getCellText->Text = PhGetStringRef(node->RemoteHostnameString);
+                {
+                    if (node->RemoteHostnameString)
+                    {
+                        getCellText->Text = PhGetStringRef(node->RemoteHostnameString);
+                    }
+                    else
+                    {
+                        PhInitializeStringRef(&getCellText->Text, L"Resolving....");
+                    }
+                }
                 break;
             case FW_COLUMN_PROTOCOL:
                 {
@@ -867,7 +899,7 @@ BOOLEAN NTAPI FwTreeNewCallback(
                {
                    SYSTEMTIME systemTime;
 
-                   PhLargeIntegerToLocalSystemTime(&systemTime, &node->AddedTime);
+                   PhLargeIntegerToLocalSystemTime(&systemTime, &node->TimeStamp);
                    PhMoveReference(&node->TimeString, PhFormatDateTime(&systemTime));
 
                    getCellText->Text = PhGetStringRef(node->TimeString);
@@ -880,9 +912,22 @@ BOOLEAN NTAPI FwTreeNewCallback(
                break;
            case FW_COLUMN_USER:
                {
-                   getCellText->Text = PhGetStringRef(node->UserName);
+                   if (node->UserSid)
+                   {
+                       PhMoveReference(&node->UserName, EtFwGetSidFullNameCachedSlow(node->UserSid));
+                       getCellText->Text = PhGetStringRef(node->UserName);
+                   }
                }
                break;
+           //case FW_COLUMN_PACKAGE:
+           //    {
+           //        if (node->PackageSid)
+           //        {
+           //            PhMoveReference(&node->PackageName, EtFwGetSidFullNameCachedSlow(node->PackageSid));
+           //            getCellText->Text = PhGetStringRef(node->PackageName);
+           //        }
+           //    }
+           //    break;
            case FW_COLUMN_COUNTRY:
                {
                    getCellText->Text = PhGetStringRef(node->RemoteCountryName);
