@@ -26,13 +26,13 @@
 #include <fwpsu.h>
 
 PH_CALLBACK_REGISTRATION EtFwProcessesUpdatedCallbackRegistration;
-PPH_OBJECT_TYPE FwObjectType = NULL;
+PPH_OBJECT_TYPE EtFwObjectType = NULL;
 HANDLE EtFwEngineHandle = NULL;
-HANDLE FwEventHandle = NULL;
+HANDLE EtFwEventHandle = NULL;
 ULONG FwRunCount = 0;
-ULONG FwMaxEventAge = 60;
-SLIST_HEADER FwPacketListHead;
-LIST_ENTRY FwAgeListHead = { &FwAgeListHead, &FwAgeListHead };
+ULONG EtFwMaxEventAge = 60;
+SLIST_HEADER EtFwPacketListHead;
+LIST_ENTRY EtFwAgeListHead = { &EtFwAgeListHead, &EtFwAgeListHead };
 _FwpmNetEventSubscribe FwpmNetEventSubscribe_I = NULL;
 
 BOOLEAN EtFwEnableResolveCache = TRUE;
@@ -194,7 +194,7 @@ PFW_EVENT_ITEM FwCreateEventItem(
     static ULONG64 Index = 0;
     PFW_EVENT_ITEM entry;
 
-    entry = PhCreateObjectZero(sizeof(FW_EVENT_ITEM), FwObjectType);
+    entry = PhCreateObjectZero(sizeof(FW_EVENT_ITEM), EtFwObjectType);
     entry->Index = ++Index;
 
     return entry;
@@ -208,7 +208,7 @@ VOID FwPushFirewallEvent(
 
     packet = PhAllocateZero(sizeof(FW_EVENT_PACKET));
     memcpy(&packet->Event, Event, sizeof(FW_EVENT));
-    RtlInterlockedPushEntrySList(&FwPacketListHead, &packet->ListEntry);
+    RtlInterlockedPushEntrySList(&EtFwPacketListHead, &packet->ListEntry);
 }
 
 VOID FwProcessFirewallEvent(
@@ -220,7 +220,6 @@ VOID FwProcessFirewallEvent(
     PFW_EVENT_ITEM entry;
 
     entry = FwCreateEventItem();
-    //PhQuerySystemTime(&entry->AddedTime);
     entry->TimeStamp = firewallEvent->TimeStamp;
     entry->Direction = firewallEvent->Direction;
     entry->Type = firewallEvent->Type;
@@ -250,7 +249,7 @@ VOID FwProcessFirewallEvent(
     // Add the item to the age list.
     entry->AddTime = RunId;
     entry->FreshTime = RunId;
-    InsertHeadList(&FwAgeListHead, &entry->AgeListEntry);
+    InsertHeadList(&EtFwAgeListHead, &entry->AgeListEntry);
 
     // Queue hostname lookup.
     PhpQueryHostnameForEntry(entry);
@@ -265,9 +264,7 @@ BOOLEAN FwProcessEventType(
     _Out_ PBOOLEAN IsLoopback,
     _Out_ PULONG Direction,
     _Out_ PULONG64 FilterId,
-    _Out_ PUSHORT LayerId,
-    _Out_ PULONG OriginalProfile,
-    _Out_ PULONG CurrentProfile
+    _Out_ PUSHORT LayerId
     )
 {
     switch (FwEvent->type)
@@ -276,7 +273,7 @@ BOOLEAN FwProcessEventType(
         {
             FWPM_NET_EVENT_CLASSIFY_DROP* fwDropEvent = FwEvent->classifyDrop;
 
-            if (fwDropEvent->isLoopback)
+            if (WindowsVersion >= WINDOWS_8 && fwDropEvent->isLoopback) // TODO: add settings and make user optional (dmex)
                 return FALSE;
 
             switch (fwDropEvent->msFwpDirection)
@@ -290,7 +287,7 @@ BOOLEAN FwProcessEventType(
                 *Direction = FWP_DIRECTION_OUTBOUND;
                 break;
             default:
-                *Direction = FWP_DIRECTION_MAX;
+                *Direction = fwDropEvent->msFwpDirection;
                 break;
             }
 
@@ -300,17 +297,17 @@ BOOLEAN FwProcessEventType(
                 *FilterId = fwDropEvent->filterId;
             if (LayerId)
                 *LayerId = fwDropEvent->layerId;
-            if (OriginalProfile)
-                *OriginalProfile = fwDropEvent->originalProfile;
-            if (CurrentProfile)
-                *CurrentProfile = fwDropEvent->currentProfile;
+            //if (OriginalProfile)
+            //    *OriginalProfile = fwDropEvent->originalProfile;
+            //if (CurrentProfile)
+            //    *CurrentProfile = fwDropEvent->currentProfile;
         }
         return TRUE;
     case FWPM_NET_EVENT_TYPE_CLASSIFY_ALLOW:
         {
             FWPM_NET_EVENT_CLASSIFY_ALLOW* fwAllowEvent = FwEvent->classifyAllow;
 
-            if (fwAllowEvent->isLoopback)
+            if (WindowsVersion >= WINDOWS_8 && fwAllowEvent->isLoopback) // TODO: add settings and make user optional (dmex)
                 return FALSE;
 
             switch (fwAllowEvent->msFwpDirection)
@@ -324,7 +321,7 @@ BOOLEAN FwProcessEventType(
                 *Direction = FWP_DIRECTION_OUTBOUND;
                 break;
             default:
-                *Direction = FWP_DIRECTION_MAX;
+                *Direction = fwAllowEvent->msFwpDirection;
                 break;
             }
 
@@ -334,12 +331,151 @@ BOOLEAN FwProcessEventType(
                 *FilterId = fwAllowEvent->filterId;
             if (LayerId)
                 *LayerId = fwAllowEvent->layerId;
-            if (OriginalProfile)
-                *OriginalProfile = fwAllowEvent->originalProfile;
-            if (CurrentProfile)
-                *CurrentProfile = fwAllowEvent->currentProfile;
+            //if (OriginalProfile)
+            //    *OriginalProfile = fwAllowEvent->originalProfile;
+            //if (CurrentProfile)
+            //    *CurrentProfile = fwAllowEvent->currentProfile;
         }
         return TRUE;
+    case FWPM_NET_EVENT_TYPE_IKEEXT_MM_FAILURE:
+        {
+            FWPM_NET_EVENT_IKEEXT_MM_FAILURE* fwIkeMmFailureEvent = FwEvent->ikeMmFailure;
+            //UINT32 failureErrorCode;
+            //IPSEC_FAILURE_POINT failurePoint;
+            //UINT32 flags;
+            //IKEEXT_KEY_MODULE_TYPE keyingModuleType;
+            //IKEEXT_MM_SA_STATE mmState;
+            //IKEEXT_SA_ROLE saRole;
+            //IKEEXT_AUTHENTICATION_METHOD_TYPE mmAuthMethod;
+            //UINT8 endCertHash[20];
+            //UINT64 mmId;
+            //UINT64 mmFilterId;
+            //wchar_t* localPrincipalNameForAuth;
+            //wchar_t* remotePrincipalNameForAuth;
+            //UINT32 numLocalPrincipalGroupSids;
+            //LPWSTR* localPrincipalGroupSids;
+            //UINT32 numRemotePrincipalGroupSids;
+            //LPWSTR* remotePrincipalGroupSids;
+            //GUID* providerContextKey;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_IKEEXT_QM_FAILURE:
+        {
+            FWPM_NET_EVENT_IKEEXT_QM_FAILURE* fwIkeQmFailureEvent = FwEvent->ikeQmFailure;
+            //UINT32 failureErrorCode;
+            //IPSEC_FAILURE_POINT failurePoint;
+            //IKEEXT_KEY_MODULE_TYPE keyingModuleType;
+            //IKEEXT_QM_SA_STATE qmState;
+            //IKEEXT_SA_ROLE saRole;
+            //IPSEC_TRAFFIC_TYPE saTrafficType;
+            //union
+            //{
+            //    FWP_CONDITION_VALUE0 localSubNet;
+            //};
+            //union
+            //{
+            //    FWP_CONDITION_VALUE0 remoteSubNet;
+            //};
+            //UINT64 qmFilterId;
+            //UINT64 mmSaLuid;
+            //GUID mmProviderContextKey;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_IKEEXT_EM_FAILURE:
+        {
+            FWPM_NET_EVENT_IKEEXT_EM_FAILURE* fwIkeEmFailureEvent = FwEvent->ikeEmFailure;
+            //UINT32 failureErrorCode;
+            //IPSEC_FAILURE_POINT failurePoint;
+            //UINT32 flags;
+            //IKEEXT_EM_SA_STATE emState;
+            //IKEEXT_SA_ROLE saRole;
+            //IKEEXT_AUTHENTICATION_METHOD_TYPE emAuthMethod;
+            //UINT8 endCertHash[20];
+            //UINT64 mmId;
+            //UINT64 qmFilterId;
+            //wchar_t* localPrincipalNameForAuth;
+            //wchar_t* remotePrincipalNameForAuth;
+            //UINT32 numLocalPrincipalGroupSids;
+            //LPWSTR* localPrincipalGroupSids;
+            //UINT32 numRemotePrincipalGroupSids;
+            //LPWSTR* remotePrincipalGroupSids;
+            //IPSEC_TRAFFIC_TYPE saTrafficType;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_IPSEC_KERNEL_DROP:
+        {
+            FWPM_NET_EVENT_IPSEC_KERNEL_DROP* fwIpsecDropEvent = FwEvent->ipsecDrop;
+            //INT32 failureStatus;
+            //FWP_DIRECTION direction;
+            //IPSEC_SA_SPI spi;
+            //UINT64 filterId;
+            //UINT16 layerId;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_IPSEC_DOSP_DROP:
+        {
+            FWPM_NET_EVENT_IPSEC_DOSP_DROP* fwIdpDropEvent = FwEvent->idpDrop;
+            //FWP_IP_VERSION ipVersion;
+            //union
+            //{
+            //    UINT32 publicHostV4Addr;
+            //    UINT8 publicHostV6Addr[16];
+            //};
+            //union
+            //{
+            //    UINT32 internalHostV4Addr;
+            //    UINT8 internalHostV6Addr[16];
+            //};
+            //INT32 failureStatus;
+            //FWP_DIRECTION direction;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_CAPABILITY_DROP:
+        {
+            FWPM_NET_EVENT_CAPABILITY_DROP* fwCapabilityDropEvent = FwEvent->capabilityDrop;
+            //FWPM_APPC_NETWORK_CAPABILITY_TYPE networkCapabilityId;
+            //UINT64 filterId;
+            //BOOL isLoopback;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_CAPABILITY_ALLOW:
+        {
+            FWPM_NET_EVENT_CAPABILITY_ALLOW* fwCapabilityAllowEvent = FwEvent->capabilityAllow;
+            //FWPM_APPC_NETWORK_CAPABILITY_TYPE networkCapabilityId;
+            //UINT64 filterId;
+            //BOOL isLoopback;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_CLASSIFY_DROP_MAC:
+        {
+            FWPM_NET_EVENT_CLASSIFY_DROP_MAC* fwClassifyDropMacEvent = FwEvent->classifyDropMac;
+            //FWP_BYTE_ARRAY6 localMacAddr;
+            //FWP_BYTE_ARRAY6 remoteMacAddr;
+            //UINT32 mediaType;
+            //UINT32 ifType;
+            //UINT16 etherType;
+            //UINT32 ndisPortNumber;
+            //UINT32 reserved;
+            //UINT16 vlanTag;
+            //UINT64 ifLuid;
+            //UINT64 filterId;
+            //UINT16 layerId;
+            //UINT32 reauthReason;
+            //UINT32 originalProfile;
+            //UINT32 currentProfile;
+            //UINT32 msFwpDirection;
+            //BOOL isLoopback;
+            //FWP_BYTE_BLOB vSwitchId;
+            //UINT32 vSwitchSourcePort;
+            //UINT32 vSwitchDestinationPort;
+        }
+        return FALSE;
+    case FWPM_NET_EVENT_TYPE_LPM_PACKET_ARRIVAL:
+        {
+            FWPM_NET_EVENT_LPM_PACKET_ARRIVAL* fwLpmPacketArrivalEvent = FwEvent->lpmPacketArrival;
+            //IPSEC_SA_SPI spi;
+        }
+        return FALSE;
     }
 
     return FALSE;
@@ -1121,8 +1257,6 @@ VOID CALLBACK EtFwEventCallback(
     ULONG direction = ULONG_MAX;
     ULONG64 filterId = 0;
     USHORT layerId = 0;
-    ULONG originalProfile = 0;
-    ULONG currentProfile = 0;
     PPH_STRING ruleName = NULL;
     PPH_STRING ruleDescription = NULL;
 
@@ -1134,22 +1268,24 @@ VOID CALLBACK EtFwEventCallback(
         &isLoopback,
         &direction,
         &filterId,
-        &layerId,
-        &originalProfile,
-        &currentProfile
+        &layerId
         ))
     {
-        return;
+        if (WindowsVersion >= WINDOWS_8) // TODO: add settings and make user optional (dmex)
+            return;
     }
 
-    if (
-        layerId == FWPS_LAYER_ALE_FLOW_ESTABLISHED_V4 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4)
-        layerId == FWPS_LAYER_ALE_FLOW_ESTABLISHED_V6 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6)
-        layerId == FWPS_LAYER_ALE_RESOURCE_ASSIGNMENT_V4 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4)
-        layerId == FWPS_LAYER_ALE_RESOURCE_ASSIGNMENT_V6 // IsEqualGUID(layerKey, FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6)
-        )
+    if (WindowsVersion >= WINDOWS_8) // TODO: add settings and make user optional (dmex)
     {
-        return;
+        if (
+            layerId == FWPS_LAYER_ALE_FLOW_ESTABLISHED_V4 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4)
+            layerId == FWPS_LAYER_ALE_FLOW_ESTABLISHED_V6 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6)
+            layerId == FWPS_LAYER_ALE_RESOURCE_ASSIGNMENT_V4 || // IsEqualGUID(layerKey, FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4)
+            layerId == FWPS_LAYER_ALE_RESOURCE_ASSIGNMENT_V6 // IsEqualGUID(layerKey, FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6)
+            )
+        {
+            return;
+        }
     }
 
     EtFwGetFilterDisplayData(filterId, &ruleName, &ruleDescription);
@@ -1302,7 +1438,7 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
 
     // Process incoming event packets.
 
-    listEntry = RtlInterlockedFlushSList(&FwPacketListHead);
+    listEntry = RtlInterlockedFlushSList(&EtFwPacketListHead);
 
     while (listEntry)
     {
@@ -1320,16 +1456,16 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
 
     // Remove old entries and update existing.
 
-    ageListEntry = FwAgeListHead.Blink;
+    ageListEntry = EtFwAgeListHead.Blink;
 
-    while (ageListEntry != &FwAgeListHead)
+    while (ageListEntry != &EtFwAgeListHead)
     {
         PFW_EVENT_ITEM item;
 
         item = CONTAINING_RECORD(ageListEntry, FW_EVENT_ITEM, AgeListEntry);
         ageListEntry = ageListEntry->Blink;
 
-        if (FwRunCount - item->FreshTime < FwMaxEventAge)
+        if (FwRunCount - item->FreshTime < EtFwMaxEventAge)
         {
             BOOLEAN modified = FALSE;
 
@@ -1354,21 +1490,21 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
     FwRunCount++;
 }
 
-ULONG EtFwStartMonitor(
+ULONG EtFwMonitorInitialize(
     VOID
     )
 {
-    PVOID moduleHandle;
+    PVOID baseAddress;
     ULONG status;
     FWP_VALUE value = { FWP_EMPTY };
     FWPM_SESSION session = { 0 };
     FWPM_NET_EVENT_SUBSCRIPTION subscription = { 0 };
     FWPM_NET_EVENT_ENUM_TEMPLATE eventTemplate = { 0 };
 
-    RtlInitializeSListHead(&FwPacketListHead);
+    RtlInitializeSListHead(&EtFwPacketListHead);
     RtlInitializeSListHead(&EtFwQueryListHead);
 
-    FwObjectType = PhCreateObjectType(L"FwObject", 0, FwObjectTypeDeleteProcedure);
+    EtFwObjectType = PhCreateObjectType(L"FwObject", 0, FwObjectTypeDeleteProcedure);
     EtFwResolveCacheHashtable = PhCreateHashtable(
         sizeof(FW_RESOLVE_CACHE_ITEM),
         EtFwResolveCacheHashtableEqualFunction,
@@ -1382,18 +1518,18 @@ ULONG EtFwStartMonitor(
         20
         );
 
-    if (!(moduleHandle = LoadLibrary(L"fwpuclnt.dll")))
+    if (!(baseAddress = LoadLibrary(L"fwpuclnt.dll")))
         return GetLastError();
     if (!FwpmNetEventSubscribe_I)
-        FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe4", 0);
+        FwpmNetEventSubscribe_I = PhGetProcedureAddress(baseAddress, "FwpmNetEventSubscribe4", 0);
     if (!FwpmNetEventSubscribe_I)
-        FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe3", 0);
+        FwpmNetEventSubscribe_I = PhGetProcedureAddress(baseAddress, "FwpmNetEventSubscribe3", 0);
     if (!FwpmNetEventSubscribe_I)
-        FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe2", 0);
+        FwpmNetEventSubscribe_I = PhGetProcedureAddress(baseAddress, "FwpmNetEventSubscribe2", 0);
     if (!FwpmNetEventSubscribe_I)
-        FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe1", 0);
+        FwpmNetEventSubscribe_I = PhGetProcedureAddress(baseAddress, "FwpmNetEventSubscribe1", 0);
     if (!FwpmNetEventSubscribe_I)
-        FwpmNetEventSubscribe_I = PhGetProcedureAddress(moduleHandle, "FwpmNetEventSubscribe0", 0);
+        FwpmNetEventSubscribe_I = PhGetProcedureAddress(baseAddress, "FwpmNetEventSubscribe0", 0);
     if (!FwpmNetEventSubscribe_I)
         return ERROR_PROC_NOT_FOUND;
 
@@ -1425,9 +1561,11 @@ ULONG EtFwStartMonitor(
         return status;
 
     value.type = FWP_UINT32;
-    value.uint32 = FWPM_NET_EVENT_KEYWORD_INBOUND_MCAST | FWPM_NET_EVENT_KEYWORD_INBOUND_BCAST | FWPM_NET_EVENT_KEYWORD_CAPABILITY_DROP;
-    if (WindowsVersion >= WINDOWS_8) value.uint32 |= FWPM_NET_EVENT_KEYWORD_CAPABILITY_ALLOW | FWPM_NET_EVENT_KEYWORD_CLASSIFY_ALLOW;
-    if (WindowsVersion >= WINDOWS_10_19H1) value.uint32 |= FWPM_NET_EVENT_KEYWORD_PORT_SCANNING_DROP;
+    value.uint32 = FWPM_NET_EVENT_KEYWORD_INBOUND_MCAST | FWPM_NET_EVENT_KEYWORD_INBOUND_BCAST;
+    if (WindowsVersion >= WINDOWS_8)
+        value.uint32 |= FWPM_NET_EVENT_KEYWORD_CAPABILITY_DROP | FWPM_NET_EVENT_KEYWORD_CAPABILITY_ALLOW | FWPM_NET_EVENT_KEYWORD_CLASSIFY_ALLOW;
+    if (WindowsVersion >= WINDOWS_10_19H1)
+        value.uint32 |= FWPM_NET_EVENT_KEYWORD_PORT_SCANNING_DROP;
 
     status = FwpmEngineSetOption(EtFwEngineHandle, FWPM_ENGINE_NET_EVENT_MATCH_ANY_KEYWORDS, &value);
 
@@ -1456,7 +1594,7 @@ ULONG EtFwStartMonitor(
         &subscription,
         EtFwEventCallback,
         NULL,
-        &FwEventHandle
+        &EtFwEventHandle
         );
 
     if (status != ERROR_SUCCESS)
@@ -1472,14 +1610,14 @@ ULONG EtFwStartMonitor(
     return ERROR_SUCCESS;
 }
 
-VOID EtFwStopMonitor(
+VOID EtFwMonitorUninitialize(
     VOID
     )
 {
-    if (FwEventHandle)
+    if (EtFwEventHandle)
     {
-        FwpmNetEventUnsubscribe(EtFwEngineHandle, FwEventHandle);
-        FwEventHandle = NULL;
+        FwpmNetEventUnsubscribe(EtFwEngineHandle, EtFwEventHandle);
+        EtFwEventHandle = NULL;
     }
 
     if (EtFwEngineHandle)
