@@ -5544,23 +5544,23 @@ typedef struct _PHP_PIPE_NAME_HASH
     ULONG Hash;
 } PHP_PIPE_NAME_HASH, *PPHP_PIPE_NAME_HASH;
 
-static BOOLEAN NTAPI PhpIsDotNetCorePipeDirectoryCallback(
+static BOOLEAN NTAPI PhpDotNetCorePipeHashCallback(
     _In_ PVOID Information,
     _In_opt_ PVOID Context
     )
 {
     PFILE_DIRECTORY_INFORMATION fileInfo = Information;
+    PHP_PIPE_NAME_HASH objectPipe;
     PH_STRINGREF objectName;
-    PHP_PIPE_NAME_HASH pipeName;
 
     if (!Context)
         return FALSE;
 
     objectName.Length = fileInfo->FileNameLength;
     objectName.Buffer = fileInfo->FileName;
+    objectPipe.Hash = PhHashStringRef(&objectName, TRUE);
 
-    pipeName.Hash = PhHashStringRef(&objectName, TRUE);
-    PhAddItemArray(Context, &pipeName);
+    PhAddItemArray(Context, &objectPipe);
 
     return TRUE;
 }
@@ -5704,6 +5704,12 @@ NTSTATUS PhGetProcessIsDotNetEx(
         {
             HANDLE directoryHandle;
             IO_STATUS_BLOCK isb;
+            ULONG pipeNameHash;
+            PH_ARRAY pipeArray;
+
+            objectNameSr.Length = returnLength - sizeof(UNICODE_NULL);
+            objectNameSr.Buffer = formatBuffer;
+            pipeNameHash = PhHashStringRef(&objectNameSr, TRUE);
 
             RtlInitUnicodeString(&objectNameUs, DEVICE_NAMED_PIPE);
             InitializeObjectAttributes(
@@ -5725,31 +5731,24 @@ NTSTATUS PhGetProcessIsDotNetEx(
 
             if (NT_SUCCESS(status))
             {
-                PH_ARRAY pipeArray;
-                ULONG pipeArrayHash;
-
                 PhInitializeArray(&pipeArray, sizeof(PHP_PIPE_NAME_HASH), 512);
 
                 status = PhEnumDirectoryFile(
                     directoryHandle,
                     NULL,
-                    PhpIsDotNetCorePipeDirectoryCallback,
+                    PhpDotNetCorePipeHashCallback,
                     &pipeArray
                     );
 
                 if (NT_SUCCESS(status))
                 {
-                    objectNameSr.Length = returnLength - sizeof(UNICODE_NULL);
-                    objectNameSr.Buffer = formatBuffer;
-                    pipeArrayHash = PhHashStringRef(&objectNameSr, TRUE);
-
                     status = STATUS_UNSUCCESSFUL;
 
                     for (ULONG i = 0; i < pipeArray.Count; i++)
                     {
                         PPHP_PIPE_NAME_HASH entry = PhItemArray(&pipeArray, i);
 
-                        if (entry->Hash == pipeArrayHash)
+                        if (entry->Hash == pipeNameHash)
                         {
                             status = STATUS_SUCCESS;
                             break;
@@ -8983,6 +8982,203 @@ NTSTATUS PhImpersonateClientOfNamedPipe(
         NULL,
         0
         );
+}
+
+NTSTATUS PhGetNamedPipeClientComputerName(
+    _In_ HANDLE PipeHandle,
+    _In_ ULONG ClientComputerNameLength,
+    _Out_ PVOID ClientComputerName
+    )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK isb;
+
+    status = NtFsControlFile(
+        PipeHandle,
+        NULL,
+        NULL,
+        NULL,
+        &isb,
+        FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE,
+        "ClientComputerName",
+        sizeof("ClientComputerName"),
+        ClientComputerName,
+        ClientComputerNameLength
+        );
+
+    if (status == STATUS_PENDING)
+    {
+        status = NtWaitForSingleObject(PipeHandle, FALSE, NULL);
+
+        if (NT_SUCCESS(status))
+            status = isb.Status;
+    }
+
+    return status;
+}
+
+NTSTATUS PhGetNamedPipeClientProcessId(
+    _In_ HANDLE PipeHandle,
+    _Out_ PHANDLE ClientProcessId
+    )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK isb;
+    ULONG processId = 0;
+
+    status = NtFsControlFile(
+        PipeHandle,
+        NULL,
+        NULL,
+        NULL,
+        &isb,
+        FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE,
+        "ClientProcessId",
+        sizeof("ClientProcessId"),
+        &processId,
+        sizeof(ULONG)
+        );
+
+    if (status == STATUS_PENDING)
+    {
+        status = NtWaitForSingleObject(PipeHandle, FALSE, NULL);
+
+        if (NT_SUCCESS(status))
+            status = isb.Status;
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        if (ClientProcessId)
+        {
+            *ClientProcessId = UlongToHandle(processId);
+        }
+    }
+
+    return status;
+}
+
+NTSTATUS PhGetNamedPipeClientSessionId(
+    _In_ HANDLE PipeHandle,
+    _Out_ PHANDLE ClientSessionId
+    )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK isb;
+    ULONG processId = 0;
+
+    status = NtFsControlFile(
+        PipeHandle,
+        NULL,
+        NULL,
+        NULL,
+        &isb,
+        FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE,
+        "ClientSessionId",
+        sizeof("ClientSessionId"),
+        &processId,
+        sizeof(ULONG)
+        );
+
+    if (status == STATUS_PENDING)
+    {
+        status = NtWaitForSingleObject(PipeHandle, FALSE, NULL);
+
+        if (NT_SUCCESS(status))
+            status = isb.Status;
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        if (ClientSessionId)
+        {
+            *ClientSessionId = UlongToHandle(processId);
+        }
+    }
+
+    return status;
+}
+
+NTSTATUS PhGetNamedPipeServerProcessId(
+    _In_ HANDLE PipeHandle,
+    _Out_ PHANDLE ServerProcessId
+    )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK isb;
+    ULONG processId = 0;
+
+    status = NtFsControlFile(
+        PipeHandle,
+        NULL,
+        NULL,
+        NULL,
+        &isb,
+        FSCTL_PIPE_GET_PIPE_ATTRIBUTE,
+        "ServerProcessId",
+        sizeof("ServerProcessId"),
+        &processId,
+        sizeof(ULONG)
+        );
+
+    if (status == STATUS_PENDING)
+    {
+        status = NtWaitForSingleObject(PipeHandle, FALSE, NULL);
+
+        if (NT_SUCCESS(status))
+            status = isb.Status;
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        if (ServerProcessId)
+        {
+            *ServerProcessId = UlongToHandle(processId);
+        }
+    }
+
+    return status;
+}
+
+NTSTATUS PhGetNamedPipeServerSessionId(
+    _In_ HANDLE PipeHandle,
+    _Out_ PHANDLE ServerSessionId
+    )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK isb;
+    ULONG processId = 0;
+
+    status = NtFsControlFile(
+        PipeHandle,
+        NULL,
+        NULL,
+        NULL,
+        &isb,
+        FSCTL_PIPE_GET_PIPE_ATTRIBUTE,
+        "ServerSessionId",
+        sizeof("ServerSessionId"),
+        &processId,
+        sizeof(ULONG)
+        );
+
+    if (status == STATUS_PENDING)
+    {
+        status = NtWaitForSingleObject(PipeHandle, FALSE, NULL);
+
+        if (NT_SUCCESS(status))
+            status = isb.Status;
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        if (ServerSessionId)
+        {
+            *ServerSessionId = UlongToHandle(processId);
+        }
+    }
+
+    return status;
 }
 
 NTSTATUS PhGetThreadName(
