@@ -32,6 +32,7 @@ HANDLE EtFwEventHandle = NULL;
 ULONG FwRunCount = 0;
 ULONG EtFwMaxEventAge = 60;
 SLIST_HEADER EtFwPacketListHead;
+PH_FREE_LIST EtFwPacketFreeList;
 LIST_ENTRY EtFwAgeListHead = { &EtFwAgeListHead, &EtFwAgeListHead };
 _FwpmNetEventSubscribe FwpmNetEventSubscribe_I = NULL;
 
@@ -208,7 +209,7 @@ VOID FwPushFirewallEvent(
 {
     PFW_EVENT_PACKET packet;
 
-    packet = PhAllocateZero(sizeof(FW_EVENT_PACKET));
+    packet = PhAllocateFromFreeList(&EtFwPacketFreeList);
     memcpy(&packet->Event, Event, sizeof(FW_EVENT));
     RtlInterlockedPushEntrySList(&EtFwPacketListHead, &packet->ListEntry);
 }
@@ -562,20 +563,20 @@ PPH_STRING EtFwGetNameFromAddress(
             //    if (!string) string = PhCreateString(L"[Multicast]");
             //    return PhReferenceObject(string);
             //}
-            else if (IN4_IS_ADDR_LINKLOCAL(&Address->InAddr))
-            {
-                static PPH_STRING string = NULL;
-                if (!string) string = PhCreateString(L"[Linklocal]");
+            //else if (IN4_IS_ADDR_LINKLOCAL(&Address->InAddr))
+            //{
+            //    static PPH_STRING string = NULL;
+            //    if (!string) string = PhCreateString(L"[Linklocal]");
 
-                return PhReferenceObject(string);
-            }
-            else if (IN4_IS_ADDR_MC_LINKLOCAL(&Address->InAddr))
-            {
-                static PPH_STRING string = NULL;
-                if (!string) string = PhCreateString(L"[Multicast-Linklocal]");
+            //    return PhReferenceObject(string);
+            //}
+            //else if (IN4_IS_ADDR_MC_LINKLOCAL(&Address->InAddr))
+            //{
+            //    static PPH_STRING string = NULL;
+            //    if (!string) string = PhCreateString(L"[Multicast-Linklocal]");
 
-                return PhReferenceObject(string);
-            }
+            //    return PhReferenceObject(string);
+            //}
             //else if (IN4_IS_ADDR_RFC1918(&Address->InAddr))
             //{
             //    static PPH_STRING string = NULL;
@@ -611,13 +612,13 @@ PPH_STRING EtFwGetNameFromAddress(
             //    if (!string) string = PhCreateString(L"[Linklocal]");
             //    return PhReferenceObject(string);
             //}
-            else if (IN6_IS_ADDR_MC_LINKLOCAL(&Address->In6Addr))
-            {
-                static PPH_STRING string = NULL;
-                if (!string) string = PhCreateString(L"[Multicast-Linklocal]");
+            //else if (IN6_IS_ADDR_MC_LINKLOCAL(&Address->In6Addr))
+            //{
+            //    static PPH_STRING string = NULL;
+            //    if (!string) string = PhCreateString(L"[Multicast-Linklocal]");
 
-                return PhReferenceObject(string);
-            }
+            //    return PhReferenceObject(string);
+            //}
         }
         break;
     }
@@ -834,7 +835,7 @@ VOID PhpQueryHostnameForEntry(
                 while (PhEnumHashtable(EtFwResolveCacheHashtable, (PVOID*)&entry, &i))
                 {
                     if ((*entry)->HostString)
-                        PhReferenceObject((*entry)->HostString);
+                        PhDereferenceObject((*entry)->HostString);
                     PhFree(*entry);
                 }
 
@@ -956,11 +957,9 @@ typedef BOOLEAN (NTAPI* PNETWORKTOOLS_GET_COUNTRYCODE)(
     _Out_ PPH_STRING* CountryCode,
     _Out_ PPH_STRING* CountryName
     );
-
 typedef INT (NTAPI* PNETWORKTOOLS_GET_COUNTRYICON)(
     _In_ PPH_STRING Name
     );
-
 typedef VOID (NTAPI* PNETWORKTOOLS_DRAW_COUNTRYICON)(
     _In_ HDC hdc,
     _In_ RECT rect,
@@ -1039,23 +1038,6 @@ VOID EtFwShowWhoisWindow(
         EtFwGetPluginInterface()->ShowWhoisWindow(Endpoint);
 }
 
-PWSTR EtFwEventTypeToString(
-    _In_ FWPM_FIELD_TYPE Type
-    )
-{
-    switch (Type)
-    {
-    case FWPM_FIELD_RAW_DATA:
-        return L"RAW_DATA";
-    case FWPM_FIELD_IP_ADDRESS:
-        return L"IP_ADDRESS";
-    case FWPM_FIELD_FLAGS:
-        return L"FLAGS";
-    }
-
-    return L"UNKNOWN";
-}
-
 typedef struct _ETFW_FILTER_DISPLAY_CONTEXT
 {
     ULONG64 FilterId;
@@ -1110,9 +1092,9 @@ BOOLEAN EtFwGetFilterDisplayData(
                 while (PhEnumHashtable(EtFwFilterDisplayDataHashTable, (PVOID*)&enumEntry, &i))
                 {
                     if ((*enumEntry).Name)
-                        PhReferenceObject((*enumEntry).Name);
+                        PhDereferenceObject((*enumEntry).Name);
                     if ((*enumEntry).Description)
-                        PhReferenceObject((*enumEntry).Description);
+                        PhDereferenceObject((*enumEntry).Description);
                 }
 
                 PhDereferenceObject(EtFwFilterDisplayDataHashTable);
@@ -1155,7 +1137,7 @@ BOOLEAN EtFwGetFilterDisplayData(
         PPH_STRING filterDescription = NULL;
         FWPM_FILTER* filter;
 
-        if (FwpmFilterGetById(EtFwEngineHandle, FilterId, &filter) == ERROR_SUCCESS)
+        if (FilterId && FwpmFilterGetById(EtFwEngineHandle, FilterId, &filter) == ERROR_SUCCESS)
         {
             if (filter->displayData.name)
                 filterName = PhCreateString(filter->displayData.name);
@@ -1246,8 +1228,10 @@ VOID EtFwFlushSidFullNameCache(
 
     while (entry = PhNextEnumHashtable(&enumContext))
     {
-        PhFree(entry->Sid);
-        PhDereferenceObject(entry->FullName);
+        if (entry->Sid)
+            PhFree(entry->Sid);
+        if (entry->FullName)
+            PhDereferenceObject(entry->FullName);
     }
 
     PhClearReference(&EtFwSidFullNameCacheHashtable);
@@ -1540,7 +1524,7 @@ VOID NTAPI EtFwProcessesUpdatedCallback(
 
         FwProcessFirewallEvent(packet, FwRunCount);
 
-        PhFree(packet);
+        PhFreeToFreeList(&EtFwPacketFreeList, packet);
     }
 
     EtFwFlushHostNameData();
@@ -1595,6 +1579,7 @@ ULONG EtFwMonitorInitialize(
     EtFwEnableResolveCache = !!PhGetIntegerSetting(L"EnableNetworkResolve");
     EtFwEnableResolveDoH = !!PhGetIntegerSetting(L"EnableNetworkResolveDoH");
 
+    PhInitializeFreeList(&EtFwPacketFreeList, sizeof(FW_EVENT_PACKET), 64);
     RtlInitializeSListHead(&EtFwPacketListHead);
     RtlInitializeSListHead(&EtFwQueryListHead);
 
