@@ -2218,6 +2218,62 @@ NTSTATUS PhGetJobProcessIdList(
     return status;
 }
 
+NTSTATUS PhGetJobBasicAndIoAccounting(
+    _In_ HANDLE JobHandle,
+    _Out_ PJOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION BasicAndIoAccounting
+    )
+{
+    return NtQueryInformationJobObject(
+        JobHandle,
+        JobObjectBasicAndIoAccountingInformation,
+        BasicAndIoAccounting,
+        sizeof(JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION),
+        NULL
+        );
+}
+
+NTSTATUS PhGetJobBasicLimits(
+    _In_ HANDLE JobHandle,
+    _Out_ PJOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimits
+    )
+{
+    return NtQueryInformationJobObject(
+        JobHandle,
+        JobObjectBasicLimitInformation,
+        BasicLimits,
+        sizeof(JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        NULL
+        );
+}
+
+NTSTATUS PhGetJobExtendedLimits(
+    _In_ HANDLE JobHandle,
+    _Out_ PJOBOBJECT_EXTENDED_LIMIT_INFORMATION ExtendedLimits
+    )
+{
+    return NtQueryInformationJobObject(
+        JobHandle,
+        JobObjectExtendedLimitInformation,
+        ExtendedLimits,
+        sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+        NULL
+        );
+}
+
+NTSTATUS PhGetJobBasicUiRestrictions(
+    _In_ HANDLE JobHandle,
+    _Out_ PJOBOBJECT_BASIC_UI_RESTRICTIONS BasicUiRestrictions
+    )
+{
+    return NtQueryInformationJobObject(
+        JobHandle,
+        JobObjectBasicUIRestrictions,
+        BasicUiRestrictions,
+        sizeof(JOBOBJECT_BASIC_UI_RESTRICTIONS),
+        NULL
+        );
+}
+
 /**
  * Queries variable-sized information for a token. The function allocates a buffer to contain the
  * information.
@@ -7443,7 +7499,7 @@ NTSTATUS PhLoadAppKey(
     UNICODE_STRING guidStringUs;
     OBJECT_ATTRIBUTES targetAttributes;
     OBJECT_ATTRIBUTES sourceAttributes;
-    WCHAR objectNameBuffer[MAX_PATH];
+    WCHAR objectNameBuffer[MAX_PATH] = L"";
 
     RtlInitEmptyUnicodeString(&objectName, objectNameBuffer, sizeof(objectNameBuffer));
 
@@ -8501,7 +8557,6 @@ NTSTATUS PhCreatePipeEx(
     HANDLE pipeDirectoryHandle;
     HANDLE pipeReadHandle;
     HANDLE pipeWriteHandle;
-    LARGE_INTEGER pipeTimeout;
     UNICODE_STRING pipeNameUs;
     OBJECT_ATTRIBUTES objectAttributes;
     IO_STATUS_BLOCK isb;
@@ -8567,7 +8622,7 @@ NTSTATUS PhCreatePipeEx(
         1,
         PAGE_SIZE,
         PAGE_SIZE,
-        PhTimeoutFromMilliseconds(&pipeTimeout, 120000)
+        PhTimeoutFromMillisecondsEx(120000)
         );
 
     if (!NT_SUCCESS(status))
@@ -8625,14 +8680,12 @@ NTSTATUS PhCreateNamedPipe(
     PACL pipeAcl = NULL;
     HANDLE pipeHandle;
     PPH_STRING pipeName;
-    LARGE_INTEGER pipeTimeout;
     UNICODE_STRING pipeNameUs;
     OBJECT_ATTRIBUTES objectAttributes;
     IO_STATUS_BLOCK isb;
 
     pipeName = PhConcatStrings2(DEVICE_NAMED_PIPE, PipeName);
     PhStringRefToUnicodeString(&pipeName->sr, &pipeNameUs);
-    PhTimeoutFromMilliseconds(&pipeTimeout, 500);
 
     InitializeObjectAttributes(
         &objectAttributes,
@@ -8663,10 +8716,10 @@ NTSTATUS PhCreateNamedPipe(
         FILE_PIPE_MESSAGE_TYPE,
         FILE_PIPE_MESSAGE_MODE,
         FILE_PIPE_QUEUE_OPERATION,
-        ULONG_MAX,
+        FILE_PIPE_UNLIMITED_INSTANCES,
         PAGE_SIZE,
         PAGE_SIZE,
-        &pipeTimeout
+        PhTimeoutFromMillisecondsEx(1000)
         );
 
     if (NT_SUCCESS(status))
