@@ -1042,8 +1042,6 @@ NTSTATUS PhpSetExploitProtectionEnabled(
     PPH_STRING path;
     PPH_STRING apppath;
     PPH_STRING keypath;
-    PH_STRINGREF stringBefore;
-    PH_STRINGREF stringAfter;
 
     if (Enabled)
     {
@@ -1086,9 +1084,12 @@ NTSTATUS PhpSetExploitProtectionEnabled(
 #ifdef _WIN64
         if (NT_SUCCESS(status))
         {
+            PH_STRINGREF stringBefore;
+            PH_STRINGREF stringAfter;
+
             if (PhSplitStringRefAtString(&keypath->sr, &replacementToken, TRUE, &stringBefore, &stringAfter))
             {
-                PhMoveReference(&keypath, PhConcatStringRef2(&wow6432Token, &stringAfter));
+                PhMoveReference(&keypath, PhConcatStringRef3(&stringBefore, &wow6432Token, &stringAfter));
 
                 if (NT_SUCCESS(PhCreateKey(
                     &keyHandle,
@@ -1151,9 +1152,12 @@ NTSTATUS PhpSetExploitProtectionEnabled(
 #ifdef _WIN64
             if (NT_SUCCESS(status))
             {
+                PH_STRINGREF stringBefore;
+                PH_STRINGREF stringAfter;
+
                 if (PhSplitStringRefAtString(&keypath->sr, &replacementToken, TRUE, &stringBefore, &stringAfter))
                 {
-                    PhMoveReference(&keypath, PhConcatStringRef2(&wow6432Token, &stringAfter));
+                    PhMoveReference(&keypath, PhConcatStringRef3(&stringBefore, &wow6432Token, &stringAfter));
 
                     status = PhCreateKey(
                         &keyHandle,
@@ -1788,6 +1792,10 @@ INT_PTR CALLBACK PhpOptionsGeneralDlgProc(
                                         {
                                             PhShowStatus(hwndDlg, L"Unable to change mitigation policy.", status, 0);
                                         }
+                                        else
+                                        {
+                                            RestartRequired = TRUE;
+                                        }
                                     }
                                     break;
                                 }
@@ -1850,6 +1858,10 @@ INT_PTR CALLBACK PhpOptionsGeneralDlgProc(
                                         if (!NT_SUCCESS(status))
                                         {
                                             PhShowStatus(hwndDlg, L"Unable to change mitigation policy.", status, 0);
+                                        }
+                                        else
+                                        {
+                                            RestartRequired = TRUE;
                                         }
                                     }
                                     break;
