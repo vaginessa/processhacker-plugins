@@ -3126,6 +3126,50 @@ NTSTATUS PhSetFilePosition(
         );
 }
 
+NTSTATUS PhGetFileAllocationSize(
+    _In_ HANDLE FileHandle,
+    _Out_ PLARGE_INTEGER AllocationSize
+    )
+{
+    NTSTATUS status;
+    FILE_ALLOCATION_INFORMATION allocationInfo;
+    IO_STATUS_BLOCK isb;
+
+    status = NtQueryInformationFile(
+        FileHandle,
+        &isb,
+        &allocationInfo,
+        sizeof(FILE_ALLOCATION_INFORMATION),
+        FileAllocationInformation
+        );
+
+    if (!NT_SUCCESS(status))
+        return status;
+
+    *AllocationSize = allocationInfo.AllocationSize;
+
+    return status;
+}
+
+NTSTATUS PhSetFileAllocationSize(
+    _In_ HANDLE FileHandle,
+    _In_ PLARGE_INTEGER AllocationSize
+    )
+{
+    FILE_ALLOCATION_INFORMATION allocationInfo;
+    IO_STATUS_BLOCK isb;
+
+    allocationInfo.AllocationSize = *AllocationSize;
+
+    return NtSetInformationFile(
+        FileHandle,
+        &isb,
+        &allocationInfo,
+        sizeof(FILE_ALLOCATION_INFORMATION),
+        FileAllocationInformation
+        );
+}
+
 NTSTATUS PhDeleteFile(
     _In_ HANDLE FileHandle
     )
@@ -7923,6 +7967,7 @@ NTSTATUS PhCreateFileWin32(
         FileHandle,
         FileName,
         DesiredAccess,
+        NULL,
         FileAttributes,
         ShareAccess,
         CreateDisposition,
@@ -7937,6 +7982,7 @@ NTSTATUS PhCreateFileWin32(
  * \param FileHandle A variable that receives the file handle.
  * \param FileName The Win32 file name.
  * \param DesiredAccess The desired access to the file.
+ * \param AllocationSize The initial allocation size if the file is being created, overwritten, or superseded.
  * \param FileAttributes File attributes applied if the file is created or overwritten.
  * \param ShareAccess The file access granted to other threads.
  * \li \c FILE_SHARE_READ Allows other threads to read from the file.
@@ -7968,6 +8014,7 @@ NTSTATUS PhCreateFileWin32Ex(
     _Out_ PHANDLE FileHandle,
     _In_ PWSTR FileName,
     _In_ ACCESS_MASK DesiredAccess,
+    _In_opt_ PLARGE_INTEGER AllocationSize,
     _In_opt_ ULONG FileAttributes,
     _In_ ULONG ShareAccess,
     _In_ ULONG CreateDisposition,
@@ -8010,7 +8057,7 @@ NTSTATUS PhCreateFileWin32Ex(
         DesiredAccess,
         &objectAttributes,
         &isb,
-        NULL,
+        AllocationSize,
         FileAttributes,
         ShareAccess,
         CreateDisposition,

@@ -668,6 +668,22 @@ PhSetFilePosition(
 PHLIBAPI
 NTSTATUS
 NTAPI
+PhGetFileAllocationSize(
+    _In_ HANDLE FileHandle,
+    _Out_ PLARGE_INTEGER AllocationSize
+    );
+
+PHLIBAPI
+NTSTATUS
+NTAPI
+PhSetFileAllocationSize(
+    _In_ HANDLE FileHandle,
+    _In_ PLARGE_INTEGER AllocationSize
+    );
+
+PHLIBAPI
+NTSTATUS
+NTAPI
 PhDeleteFile(
     _In_ HANDLE FileHandle
     );
@@ -1450,6 +1466,7 @@ PhCreateFileWin32Ex(
     _Out_ PHANDLE FileHandle,
     _In_ PWSTR FileName,
     _In_ ACCESS_MASK DesiredAccess,
+    _In_opt_ PLARGE_INTEGER AllocationSize,
     _In_opt_ ULONG FileAttributes,
     _In_ ULONG ShareAccess,
     _In_ ULONG CreateDisposition,
@@ -1478,7 +1495,7 @@ PhOpenFileWin32(
     _In_ PWSTR FileName,
     _In_ ACCESS_MASK DesiredAccess,
     _In_ ULONG ShareAccess,
-    _In_ ULONG CreateOptions
+    _In_ ULONG OpenOptions
     );
 
 PHLIBAPI
