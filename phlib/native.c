@@ -8506,7 +8506,7 @@ static BOOLEAN PhpDeleteDirectoryCallback(
         if (NT_SUCCESS(PhCreateFileWin32(
             &directoryHandle,
             PhGetString(fullName),
-            FILE_GENERIC_READ | DELETE,
+            FILE_LIST_DIRECTORY | FILE_WRITE_ATTRIBUTES | DELETE | SYNCHRONIZE,
             FILE_ATTRIBUTE_DIRECTORY,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
             FILE_OPEN,
@@ -8515,7 +8515,6 @@ static BOOLEAN PhpDeleteDirectoryCallback(
         {
             PhEnumDirectoryFile(directoryHandle, NULL, PhpDeleteDirectoryCallback, fullName);
 
-            // Delete the directory. 
             PhDeleteFile(directoryHandle);
 
             NtClose(directoryHandle);
@@ -8530,35 +8529,22 @@ static BOOLEAN PhpDeleteDirectoryCallback(
             if (NT_SUCCESS(PhCreateFileWin32(
                 &fileHandle,
                 PhGetString(fullName),
-                FILE_GENERIC_READ | FILE_WRITE_ATTRIBUTES,
+                FILE_WRITE_ATTRIBUTES | DELETE | SYNCHRONIZE,
                 FILE_ATTRIBUTE_NORMAL,
                 FILE_SHARE_WRITE,
                 FILE_OPEN,
                 FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
                 )))
             {
-                IO_STATUS_BLOCK isb;
-                FILE_BASIC_INFORMATION fileInfo;
-
-                memset(&fileInfo, 0, sizeof(FILE_BASIC_INFORMATION));
-
-                // Clear the read-only flag.
-                fileInfo.FileAttributes = Information->FileAttributes &= ~FILE_ATTRIBUTE_READONLY;
-
-                NtSetInformationFile(
-                    fileHandle,
-                    &isb,
-                    &fileInfo,
-                    sizeof(FILE_BASIC_INFORMATION),
-                    FileBasicInformation
-                    );
+                PhDeleteFile(fileHandle);
 
                 NtClose(fileHandle);
             }
         }
-
-        // Delete the file. 
-        PhDeleteFileWin32(PhGetString(fullName));
+        else
+        {
+            PhDeleteFileWin32(PhGetString(fullName));
+        }
     }
 
     PhDereferenceObject(fullName);
@@ -8672,72 +8658,83 @@ NTSTATUS PhMoveFileWin32(
     if (status == STATUS_NOT_SAME_DEVICE)
     {
         HANDLE newFileHandle;
+        LARGE_INTEGER newFileSize;
         BYTE buffer[PAGE_SIZE];
 
-        status = PhCreateFileWin32(
+        status = PhGetFileSize(fileHandle, &newFileSize);
+
+        if (!NT_SUCCESS(status))
+            goto CleanupExit;
+
+        status = PhCreateFileWin32Ex(
             &newFileHandle,
             NewFileName,
             FILE_GENERIC_WRITE,
+            &newFileSize,
             FILE_ATTRIBUTE_NORMAL,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_SHARE_READ,
             FILE_OVERWRITE_IF,
-            FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
+            FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+            NULL
             );
 
-        if (!NT_SUCCESS(status))
+        if (NT_SUCCESS(status))
         {
-            NtClose(fileHandle);
-            RtlFreeUnicodeString(&newFileName);
-            PhFree(renameInfo);
-            return status;
+            while (TRUE)
+            {
+                status = NtReadFile(
+                    fileHandle,
+                    NULL,
+                    NULL,
+                    NULL,
+                    &isb,
+                    buffer,
+                    sizeof(buffer),
+                    NULL,
+                    NULL
+                    );
+
+                if (!NT_SUCCESS(status))
+                    break;
+                if (isb.Information == 0)
+                    break;
+
+                status = NtWriteFile(
+                    newFileHandle,
+                    NULL,
+                    NULL,
+                    NULL,
+                    &isb,
+                    buffer,
+                    (ULONG)isb.Information,
+                    NULL,
+                    NULL
+                    );
+
+                if (!NT_SUCCESS(status))
+                    break;
+                if (isb.Information == 0)
+                    break;
+            }
+
+            if (status == STATUS_END_OF_FILE)
+            {
+                status = STATUS_SUCCESS;
+            }
+
+            if (status != STATUS_SUCCESS)
+            {
+                PhDeleteFile(newFileHandle);
+            }
+
+            NtClose(newFileHandle);
         }
-
-        while (TRUE)
-        {
-            status = NtReadFile(
-                fileHandle,
-                NULL,
-                NULL,
-                NULL,
-                &isb,
-                buffer,
-                sizeof(buffer),
-                NULL,
-                NULL
-                );
-
-            if (!NT_SUCCESS(status))
-                break;
-            if (isb.Information == 0)
-                break;
-
-            status = NtWriteFile(
-                newFileHandle,
-                NULL,
-                NULL,
-                NULL,
-                &isb,
-                buffer,
-                (ULONG)isb.Information,
-                NULL,
-                NULL
-                );
-
-            if (!NT_SUCCESS(status))
-                break;
-            if (isb.Information == 0)
-                break;
-        }
-
-        NtClose(newFileHandle);
     }
 
+CleanupExit:
     NtClose(fileHandle);
     RtlFreeUnicodeString(&newFileName);
     PhFree(renameInfo);
-
-    if (status == STATUS_END_OF_FILE)
-        status = STATUS_SUCCESS;
 
     return status;
 }
