@@ -8536,6 +8536,25 @@ static BOOLEAN PhpDeleteDirectoryCallback(
                 FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
                 )))
             {
+                if (WindowsVersion < WINDOWS_10_RS5) // We can ignore readonly attributes starting with RS5 (dmex)
+                {
+                    IO_STATUS_BLOCK isb;
+                    FILE_BASIC_INFORMATION fileInfo;
+
+                    memset(&fileInfo, 0, sizeof(FILE_BASIC_INFORMATION));
+
+                    // Clear the read-only flag.
+                    fileInfo.FileAttributes = Information->FileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+
+                    NtSetInformationFile(
+                        fileHandle,
+                        &isb,
+                        &fileInfo,
+                        sizeof(FILE_BASIC_INFORMATION),
+                        FileBasicInformation
+                        );
+                }
+
                 PhDeleteFile(fileHandle);
 
                 NtClose(fileHandle);
@@ -8828,7 +8847,7 @@ NTSTATUS PhCreatePipeEx(
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         FILE_CREATE,
         FILE_PIPE_INBOUND | FILE_SYNCHRONOUS_IO_NONALERT,
-        FILE_PIPE_BYTE_STREAM_TYPE,
+        FILE_PIPE_BYTE_STREAM_TYPE | FILE_PIPE_REJECT_REMOTE_CLIENTS,
         FILE_PIPE_BYTE_STREAM_MODE,
         FILE_PIPE_QUEUE_OPERATION,
         1,
@@ -8926,7 +8945,7 @@ NTSTATUS PhCreateNamedPipe(
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         FILE_OPEN_IF,
         FILE_PIPE_FULL_DUPLEX | FILE_SYNCHRONOUS_IO_NONALERT,
-        FILE_PIPE_MESSAGE_TYPE,
+        FILE_PIPE_MESSAGE_TYPE | FILE_PIPE_REJECT_REMOTE_CLIENTS,
         FILE_PIPE_MESSAGE_MODE,
         FILE_PIPE_QUEUE_OPERATION,
         FILE_PIPE_UNLIMITED_INSTANCES,
