@@ -22,6 +22,7 @@
 
 #include <peview.h>
 #include <bcrypt.h>
+#include "tlsh/tlsh_wrapper.h"
 
 typedef struct _PVP_HASH_CONTEXT
 {
@@ -457,6 +458,7 @@ VOID PvpPeEnumFileHashes(
     PPH_STRING imphashString = NULL;
     PPH_STRING impMsftHashString = NULL;
     PPH_STRING ssdeepHashString = NULL;
+    PPH_STRING tlshHashString = NULL;
     WCHAR number[PH_PTR_STR_LEN_1];
 
     ListView_EnableGroupView(ListViewHandle, TRUE);
@@ -496,6 +498,12 @@ VOID PvpPeEnumFileHashes(
             PvMappedImage.ViewBase,
             PvMappedImage.Size,
             &ssdeepHashString
+            );
+
+        PvGetTlshBufferHash(
+            PvMappedImage.ViewBase,
+            PvMappedImage.Size,
+            &tlshHashString
             );
 
         NtClose(fileHandle);
@@ -599,6 +607,16 @@ VOID PvpPeEnumFileHashes(
         PhSetListViewSubItem(ListViewHandle, lvItemIndex, 1, L"SSDEEP");
         PhSetListViewSubItem(ListViewHandle, lvItemIndex, 2, PhGetString(ssdeepHashString));
         PhDereferenceObject(ssdeepHashString);
+    }
+
+    if (!PhIsNullOrEmptyString(tlshHashString))
+    {
+        PhPrintUInt32(number, ++count);
+        lvItemIndex = PhAddListViewGroupItem(ListViewHandle, 2, MAXINT, number, NULL);
+
+        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 1, L"TLSH");
+        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 2, PhGetString(tlshHashString));
+        PhDereferenceObject(tlshHashString);
     }
 }
 
