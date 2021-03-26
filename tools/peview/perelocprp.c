@@ -36,6 +36,7 @@ VOID PvEnumerateRelocationEntries(
             PPH_IMAGE_RELOC_ENTRY entry = PTR_ADD_OFFSET(relocations.RelocationEntries, i * sizeof(PH_IMAGE_RELOC_ENTRY));
             INT lvItemIndex;
             WCHAR value[PH_INT64_STR_LEN_1];
+            PPH_STRING symbol;
 
             PhPrintUInt64(value, ++count);
             lvItemIndex = PhAddListViewItem(ListViewHandle, MAXINT, value, NULL);
@@ -47,111 +48,36 @@ VOID PvEnumerateRelocationEntries(
             switch (entry->Type)
             {
             case IMAGE_REL_BASED_ABSOLUTE:
-                PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"ABS");
+                {
+                    PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"ABS");
+                }
                 break;
             case IMAGE_REL_BASED_HIGH:
                 {
-                    USHORT highValue = USHRT_MAX;
-
                     PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"HIGH");
-
-                    if (entry->Value)
-                    {
-                        __try
-                        {
-                            highValue = *(PUSHORT)entry->Value;
-                        }
-                        __except (EXCEPTION_EXECUTE_HANDLER)
-                        {
-                            NOTHING;
-                        }
-                    }
-
-                    if (highValue != USHRT_MAX)
-                    {
-                        PhPrintPointer(value, (PVOID)highValue);
-                        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 4, value);
-                    }
                 }
                 break;
             case IMAGE_REL_BASED_LOW:
                 {
-                    USHORT lowValue = USHRT_MAX;
-
                     PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"LOW");
-
-                    if (entry->Value)
-                    {
-                        __try
-                        {
-                            lowValue = *(PUSHORT)entry->Value;
-                        }
-                        __except (EXCEPTION_EXECUTE_HANDLER)
-                        {
-                            NOTHING;
-                        }
-                    }
-
-                    if (lowValue != USHRT_MAX)
-                    {
-                        PhPrintPointer(value, (PVOID)lowValue);
-                        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 4, value);
-                    }
                 }
                 break;
             case IMAGE_REL_BASED_HIGHLOW:
                 {
-                    ULONG highlowValue = ULONG_MAX;
-
                     PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"HIGHLOW");
-
-                    if (entry->Value)
-                    {
-                        __try
-                        {
-                            highlowValue = *(PULONG)entry->Value;
-                        }
-                        __except (EXCEPTION_EXECUTE_HANDLER)
-                        {
-                            NOTHING;
-                        }
-                    }
-
-                    if (highlowValue && highlowValue != ULONG_MAX)
-                    {
-                        PhPrintPointer(value, UlongToPtr(highlowValue));
-                        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 4, value);
-                    }
                 }
                 break;
             case IMAGE_REL_BASED_DIR64:
                 {
-                    ULONGLONG dirValue = ULLONG_MAX;
-
                     PhSetListViewSubItem(ListViewHandle, lvItemIndex, 3, L"DIR64");
-
-                    if (entry->Value)
-                    {
-                        __try
-                        {
-                            dirValue = *(PULONGLONG)entry->Value;
-                        }
-                        __except (EXCEPTION_EXECUTE_HANDLER)
-                        {
-                            NOTHING;
-                        }
-                    }
-
-                    if (dirValue && dirValue != ULLONG_MAX)
-                    {
-                        PhPrintPointer(value, (PVOID)dirValue);
-                        PhSetListViewSubItem(ListViewHandle, lvItemIndex, 4, value);
-                    }
                 }
                 break;
             }
 
-            if (entry->BlockRva && entry->Offset)
+            PhPrintPointer(value, entry->ImageBaseVa);
+            PhSetListViewSubItem(ListViewHandle, lvItemIndex, 4, value);
+
+            if (entry->BlockRva)
             {
                 PIMAGE_SECTION_HEADER directorySection;
 
@@ -174,6 +100,21 @@ VOID PvEnumerateRelocationEntries(
                         PhSetListViewSubItem(ListViewHandle, lvItemIndex, 5, sectionName);
                     }
                 }
+            }
+
+            symbol = PhGetSymbolFromAddress(
+                PvSymbolProvider,
+                (ULONG64)entry->ImageBaseVa,
+                NULL,
+                NULL,
+                NULL,
+                NULL
+                );
+
+            if (symbol)
+            {
+                PhSetListViewSubItem(ListViewHandle, lvItemIndex, 6, symbol->Buffer);
+                PhDereferenceObject(symbol);
             }
         }
     }
@@ -205,8 +146,9 @@ INT_PTR CALLBACK PvpPeRelocationDlgProc(
             PhAddListViewColumn(lvHandle, 1, 1, 1, LVCFMT_LEFT, 100, L"RVA");
             PhAddListViewColumn(lvHandle, 2, 2, 2, LVCFMT_LEFT, 100, L"Offset");
             PhAddListViewColumn(lvHandle, 3, 3, 3, LVCFMT_LEFT, 100, L"Type");
-            PhAddListViewColumn(lvHandle, 4, 4, 4, LVCFMT_LEFT, 150, L"Value");
+            PhAddListViewColumn(lvHandle, 4, 4, 4, LVCFMT_LEFT, 150, L"ImageBaseVA");
             PhAddListViewColumn(lvHandle, 5, 5, 5, LVCFMT_LEFT, 100, L"Section");
+            PhAddListViewColumn(lvHandle, 6, 6, 6, LVCFMT_LEFT, 100, L"Symbol");
             PhSetExtendedListView(lvHandle);
             PhLoadListViewColumnsFromSetting(L"ImageRelocationsListViewColumns", lvHandle);
 
