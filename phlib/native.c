@@ -5433,25 +5433,57 @@ NTSTATUS PhEnumHandlesEx(
     NTSTATUS status;
     PVOID buffer;
     ULONG bufferSize;
+    ULONG returnLength = 0;
+    ULONG attempts = 0;
 
     bufferSize = initialBufferSize;
     buffer = PhAllocate(bufferSize);
 
-    while ((status = NtQuerySystemInformation(
+    status = NtQuerySystemInformation(
         SystemExtendedHandleInformation,
         buffer,
         bufferSize,
-        NULL
-        )) == STATUS_INFO_LENGTH_MISMATCH)
+        &returnLength
+        );
+
+    while (status == STATUS_INFO_LENGTH_MISMATCH && attempts < 10)
     {
         PhFree(buffer);
-        bufferSize *= 2;
-
-        // Fail if we're resizing the buffer to something very large.
-        if (bufferSize > PH_LARGE_BUFFER_SIZE)
-            return STATUS_INSUFFICIENT_RESOURCES;
-
+        bufferSize = returnLength;
         buffer = PhAllocate(bufferSize);
+
+        status = NtQuerySystemInformation(
+            SystemExtendedHandleInformation,
+            buffer,
+            bufferSize,
+            &returnLength
+            );
+
+        attempts++;
+    }
+
+    if (!NT_SUCCESS(status))
+    {
+        // Fall back to using the previous code that we've used since Windows XP (dmex)
+        bufferSize = initialBufferSize;
+        buffer = PhAllocate(bufferSize);
+
+        while ((status = NtQuerySystemInformation(
+            SystemExtendedHandleInformation,
+            buffer,
+            bufferSize,
+            NULL
+            )) == STATUS_INFO_LENGTH_MISMATCH)
+        {
+            PhFree(buffer);
+            bufferSize *= 2;
+
+            // Fail if we're resizing the buffer to something very large.
+            if (bufferSize > PH_LARGE_BUFFER_SIZE)
+                return STATUS_INSUFFICIENT_RESOURCES;
+
+            buffer = PhAllocate(bufferSize);
+        }
     }
 
     if (!NT_SUCCESS(status))
@@ -8209,7 +8241,7 @@ NTSTATUS PhCreateFile(
     _Out_ PHANDLE FileHandle,
     _In_ PPH_STRING FileName,
     _In_ ACCESS_MASK DesiredAccess,
-    _In_opt_ ULONG FileAttributes,
+    _In_ ULONG FileAttributes,
     _In_ ULONG ShareAccess,
     _In_ ULONG CreateDisposition,
     _In_ ULONG CreateOptions
@@ -8222,7 +8254,7 @@ NTSTATUS PhCreateFile(
     IO_STATUS_BLOCK isb;
 
     if (!PhStringRefToUnicodeString(&FileName->sr, &fileName))
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_NAME_TOO_LONG;
 
     InitializeObjectAttributes(
         &objectAttributes,
@@ -8450,7 +8482,7 @@ NTSTATUS PhQueryFullAttributesFile(
     OBJECT_ATTRIBUTES objectAttributes;
 
     if (!PhStringRefToUnicodeString(&FileName->sr, &fileName))
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_NAME_TOO_LONG;
 
     InitializeObjectAttributes(
         &objectAttributes,
@@ -8509,7 +8541,7 @@ NTSTATUS PhQueryAttributesFile(
     OBJECT_ATTRIBUTES objectAttributes;
 
     if (!PhStringRefToUnicodeString(&FileName->sr, &fileName))
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_NAME_TOO_LONG;
 
     InitializeObjectAttributes(
         &objectAttributes,
