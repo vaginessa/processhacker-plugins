@@ -677,7 +677,7 @@ static ULONG SharedIconCacheHashtableHashFunction(
 }
 
 HICON PhLoadIcon(
-    _In_opt_ HINSTANCE InstanceHandle,
+    _In_opt_ PVOID ImageBaseAddress,
     _In_ PWSTR Name,
     _In_ ULONG Flags,
     _In_opt_ ULONG Width,
@@ -699,7 +699,7 @@ HICON PhLoadIcon(
     {
         PhAcquireQueuedLockExclusive(&SharedIconCacheLock);
 
-        entry.InstanceHandle = InstanceHandle;
+        entry.InstanceHandle = ImageBaseAddress;
         entry.Name = Name;
         entry.Width = PhpGetIconEntrySize(Width, Flags);
         entry.Height = PhpGetIconEntrySize(Height, Flags);
@@ -715,45 +715,48 @@ HICON PhLoadIcon(
 
     if (Flags & (PH_LOAD_ICON_SIZE_SMALL | PH_LOAD_ICON_SIZE_LARGE))
     {
-        if (LoadIconMetric)
-            LoadIconMetric(InstanceHandle, Name, (Flags & PH_LOAD_ICON_SIZE_SMALL) ? LIM_SMALL : LIM_LARGE, &icon);
+        INT width;
+        INT height;
+
+        if (Flags & PH_LOAD_ICON_SIZE_SMALL)
+        {
+            width = PhSmallIconSize.X;
+            height = PhSmallIconSize.Y;
+        }
+        else
+        {
+            width = PhLargeIconSize.X;
+            height = PhLargeIconSize.Y;
+        }
+
+        if (LoadIconWithScaleDown)
+            LoadIconWithScaleDown(ImageBaseAddress, Name, width, height, &icon);
+        //if (LoadIconMetric)
+        //    LoadIconMetric(ImageBaseAddress, Name, (Flags & PH_LOAD_ICON_SIZE_SMALL) ? LIM_SMALL : LIM_LARGE, &icon);
     }
     else
     {
         if (LoadIconWithScaleDown)
-            LoadIconWithScaleDown(InstanceHandle, Name, Width, Height, &icon);
+            LoadIconWithScaleDown(ImageBaseAddress, Name, Width, Height, &icon);
     }
 
     if (!icon && !(Flags & PH_LOAD_ICON_STRICT))
     {
+        INT width;
+        INT height;
+
         if (Flags & PH_LOAD_ICON_SIZE_SMALL)
         {
-            static ULONG smallWidth = 0;
-            static ULONG smallHeight = 0;
-
-            if (!smallWidth)
-                smallWidth = GetSystemMetrics(SM_CXSMICON);
-            if (!smallHeight)
-                smallHeight = GetSystemMetrics(SM_CYSMICON);
-
-            Width = smallWidth;
-            Height = smallHeight;
+            width = PhSmallIconSize.X;
+            height = PhSmallIconSize.Y;
         }
-        else if (Flags & PH_LOAD_ICON_SIZE_LARGE)
+        else
         {
-            static ULONG largeWidth = 0;
-            static ULONG largeHeight = 0;
-
-            if (!largeWidth)
-                largeWidth = GetSystemMetrics(SM_CXICON);
-            if (!largeHeight)
-                largeHeight = GetSystemMetrics(SM_CYICON);
-
-            Width = largeWidth;
-            Height = largeHeight;
+            width = PhLargeIconSize.X;
+            height = PhLargeIconSize.Y;
         }
 
-        icon = LoadImage(InstanceHandle, Name, IMAGE_ICON, Width, Height, 0);
+        icon = LoadImage(ImageBaseAddress, Name, IMAGE_ICON, width, height, 0);
     }
 
     if (Flags & PH_LOAD_ICON_SHARED)
