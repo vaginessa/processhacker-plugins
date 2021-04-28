@@ -3069,7 +3069,7 @@ VOID PhProcessImageListInitialization(
     HICON iconLarge;
 
     PhImageListItemType = PhCreateObjectType(L"ImageListItem", 0, PhpImageListItemDeleteProcedure);
-    
+
     PhProcessLargeImageList = ImageList_Create(PhLargeIconSize.X, PhLargeIconSize.Y, ILC_MASK | ILC_COLOR32, 100, 100);
     PhProcessSmallImageList = ImageList_Create(PhSmallIconSize.X, PhSmallIconSize.Y, ILC_MASK | ILC_COLOR32, 100, 100);
     ImageList_SetBkColor(PhProcessLargeImageList, CLR_NONE);
