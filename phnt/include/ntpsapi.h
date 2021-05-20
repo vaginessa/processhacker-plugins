@@ -260,13 +260,13 @@ typedef enum _THREADINFOCLASS
     ThreadTebInformation, // q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_SET_CONTEXT)
     ThreadCSwitchMon,
     ThreadCSwitchPmu,
-    ThreadWow64Context, // q: WOW64_CONTEXT
+    ThreadWow64Context, // qs: WOW64_CONTEXT
     ThreadGroupInformation, // q: GROUP_AFFINITY // 30
     ThreadUmsInformation, // q: THREAD_UMS_INFORMATION
     ThreadCounterProfiling,
     ThreadIdealProcessorEx, // q: PROCESSOR_NUMBER
     ThreadCpuAccountingInformation, // since WIN8
-    ThreadSuspendCount, // since WINBLUE
+    ThreadSuspendCount, // q: ULONG // since WINBLUE
     ThreadHeterogeneousCpuPolicy, // q: KHETERO_CPU_POLICY // since THRESHOLD
     ThreadContainerId, // q: GUID
     ThreadNameInformation, // qs: THREAD_NAME_INFORMATION
@@ -275,7 +275,7 @@ typedef enum _THREADINFOCLASS
     ThreadActualGroupAffinity, // since THRESHOLD2
     ThreadDynamicCodePolicyInfo,
     ThreadExplicitCaseSensitivity, // qs: ULONG; s: 0 disables, otherwise enables
-    ThreadWorkOnBehalfTicket,
+    ThreadWorkOnBehalfTicket, // RTL_WORK_ON_BEHALF_TICKET_EX
     ThreadSubsystemInformation, // q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
     ThreadDbgkWerReportActive,
     ThreadAttachContainer,
@@ -1146,6 +1146,29 @@ typedef struct _THREAD_NAME_INFORMATION
     UNICODE_STRING ThreadName;
 } THREAD_NAME_INFORMATION, *PTHREAD_NAME_INFORMATION;
 
+// private
+typedef struct _ALPC_WORK_ON_BEHALF_TICKET
+{
+    ULONG ThreadId;
+    ULONG ThreadCreationTimeLow;
+} ALPC_WORK_ON_BEHALF_TICKET, *PALPC_WORK_ON_BEHALF_TICKET;
+
+// private
+typedef struct _RTL_WORK_ON_BEHALF_TICKET_EX
+{
+    ALPC_WORK_ON_BEHALF_TICKET Ticket;
+    union
+    {
+        ULONG Flags;
+        struct
+        {
+            ULONG CurrentThread : 1;
+            ULONG Reserved1 : 31;
+        };
+    };
+    ULONG Reserved2;
+} RTL_WORK_ON_BEHALF_TICKET_EX, *PRTL_WORK_ON_BEHALF_TICKET_EX;
+
 #if (PHNT_MODE != PHNT_MODE_KERNEL)
 // private
 typedef enum _SUBSYSTEM_INFORMATION_TYPE 
@@ -1372,6 +1395,15 @@ NTAPI
 NtGetCurrentProcessorNumber(
     VOID
     );
+
+#if (PHNT_VERSION >= PHNT_WIN7)
+NTSYSCALLAPI
+ULONG
+NTAPI
+NtGetCurrentProcessorNumberEx(
+    _Out_opt_ PPROCESSOR_NUMBER ProcNumber
+    );
+#endif
 
 NTSYSCALLAPI
 NTSTATUS
