@@ -3208,7 +3208,7 @@ NTSTATUS PhSetFilePosition(
     IO_STATUS_BLOCK isb;
 
     if (Position)
-        positionInfo.CurrentByteOffset = *Position;
+        positionInfo.CurrentByteOffset.QuadPart = Position->QuadPart;
     else
         positionInfo.CurrentByteOffset.QuadPart = 0;
 
@@ -6913,6 +6913,19 @@ PPH_STRING PhGetFileName(
         newFileName->Buffer[systemRoot.Length / sizeof(WCHAR)] = OBJ_NAME_PATH_SEPARATOR;
         memcpy(PTR_ADD_OFFSET(newFileName->Buffer, systemRoot.Length + sizeof(UNICODE_NULL)), FileName->Buffer, FileName->Length);
     }
+#ifdef _WIN64
+    // "SysWOW64\" means "C:\Windows\SysWOW64\".
+    else if (PhStartsWithString2(FileName, L"SysWOW64\\", TRUE))
+    {
+        PH_STRINGREF systemRoot;
+
+        PhGetSystemRoot(&systemRoot);
+        newFileName = PhCreateStringEx(NULL, systemRoot.Length + sizeof(UNICODE_NULL) + FileName->Length);
+        memcpy(newFileName->Buffer, systemRoot.Buffer, systemRoot.Length);
+        newFileName->Buffer[systemRoot.Length / sizeof(WCHAR)] = OBJ_NAME_PATH_SEPARATOR;
+        memcpy(PTR_ADD_OFFSET(newFileName->Buffer, systemRoot.Length + sizeof(UNICODE_NULL)), FileName->Buffer, FileName->Length);
+    }
+#endif
     else if (FileName->Length != 0 && FileName->Buffer[0] == OBJ_NAME_PATH_SEPARATOR)
     {
         PPH_STRING resolvedName;
@@ -10133,3 +10146,63 @@ CleanupExit:
     return status;
 }
 
+NTSTATUS PhGetThreadLastStatusValue(
+    _In_ HANDLE ThreadHandle,
+    _In_opt_ HANDLE ProcessHandle,
+    _Out_ PNTSTATUS LastStatusValue
+    )
+{
+    NTSTATUS status;
+    THREAD_BASIC_INFORMATION basicInfo;
+    BOOLEAN openedProcessHandle = FALSE;
+
+    if (!NT_SUCCESS(status = PhGetThreadBasicInformation(ThreadHandle, &basicInfo)))
+        return status;
+
+    if (!ProcessHandle)
+    {
+        if (!NT_SUCCESS(status = PhOpenThreadProcess(
+            ThreadHandle,
+            PROCESS_VM_READ,
+            &ProcessHandle
+            )))
+            return status;
+
+        openedProcessHandle = TRUE;
+    }
+
+    status = NtReadVirtualMemory(
+        ProcessHandle,
+        PTR_ADD_OFFSET(basicInfo.TebBaseAddress, UFIELD_OFFSET(TEB, LastStatusValue)), // LastErrorValue/ExceptionCode
+        LastStatusValue,
+        sizeof(NTSTATUS),
+        NULL
+        );
+
+    if (openedProcessHandle)
+        NtClose(ProcessHandle);
+
+    return status;
+}
+
+BOOLEAN PhIsFirmwareSupported(
+    VOID
+    )
+{
+    UNICODE_STRING variableName = RTL_CONSTANT_STRING(L" ");
+    ULONG variableValueLength = 0;
+    GUID vendorGuid = { 0 };
+
+    if (NtQuerySystemEnvironmentValueEx(
+        &variableName, 
+        &vendorGuid,
+        NULL,
+        &variableValueLength,
+        NULL
+        ) == STATUS_VARIABLE_NOT_FOUND)
+    {
+        return TRUE;
+    }
+
+    return FALSE;
+}
