@@ -28,13 +28,6 @@ jobs:
     - name: Build Plugins Extra   
       continue-on-error: true
       run: |
-        #BEGIN temp fix to build  MemoryExtPlugin
-        cd plugins-extra
-        gh pr checkout https://github.com/processhacker/plugins-extra/pull/92
-        git checkout master
-        git merge patch-1
-        cd ..
-        #END temp fix to build  MemoryExtPlugin
         msbuild plugins-extra\ExtraPlugins.sln /p:Configuration=Release /p:Platform=x64
         7z a -tzip -r plugins-extra_x64-release.zip ".\bin\Release64\plugins\*.dll" -x!SbieSupport.dll
 
