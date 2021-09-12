@@ -37,7 +37,6 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v142</PlatformToolset>
     <SpectreMitigation>Spectre</SpectreMitigation>
   </PropertyGroup>
@@ -51,14 +50,12 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v142</PlatformToolset>
     <SpectreMitigation>Spectre</SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <CharacterSet>Unicode</CharacterSet>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v142</PlatformToolset>
     <SpectreMitigation>false</SpectreMitigation>
   </PropertyGroup>
@@ -302,6 +299,28 @@
     <ClCompile Include="capstone\MCRegisterInfo.c" />
     <ClCompile Include="capstone\SStream.c" />
     <ClCompile Include="capstone\utils.c" />
+    <ClCompile Include="gzip\adler32.c" />
+    <ClCompile Include="gzip\compress.c" />
+    <ClCompile Include="gzip\crc32.c" />
+    <ClCompile Include="gzip\deflate.c" />
+    <ClCompile Include="gzip\gzclose.c" />
+    <ClCompile Include="gzip\gzlib.c" />
+    <ClCompile Include="gzip\gzread.c" />
+    <ClCompile Include="gzip\gzwrite.c" />
+    <ClCompile Include="gzip\infback.c" />
+    <ClCompile Include="gzip\inffast.c" />
+    <ClCompile Include="gzip\inflate.c" />
+    <ClCompile Include="gzip\inftrees.c" />
+    <ClCompile Include="gzip\ioapi.c" />
+    <ClCompile Include="gzip\iowin32.c" />
+    <ClCompile Include="gzip\miniunz.c" />
+    <ClCompile Include="gzip\minizip.c" />
+    <ClCompile Include="gzip\mztools.c" />
+    <ClCompile Include="gzip\trees.c" />
+    <ClCompile Include="gzip\uncompr.c" />
+    <ClCompile Include="gzip\unzip.c" />
+    <ClCompile Include="gzip\zip.c" />
+    <ClCompile Include="gzip\zutil.c" />
     <ClCompile Include="jsonc\arraylist.c" />
     <ClCompile Include="jsonc\debug.c" />
     <ClCompile Include="jsonc\json_c_version.c" />
@@ -316,6 +335,8 @@
     <ClCompile Include="jsonc\printbuf.c" />
     <ClCompile Include="jsonc\random_seed.c" />
     <ClCompile Include="jsonc\strerror_override.c" />
+    <ClCompile Include="maxminddb\data-pool.c" />
+    <ClCompile Include="maxminddb\maxminddb.c" />
     <ClCompile Include="mxml\mxml-attr.c" />
     <ClCompile Include="mxml\mxml-entity.c" />
     <ClCompile Include="mxml\mxml-file.c" />
@@ -354,6 +375,11 @@
     <ClCompile Include="pcre\pcre2_ucd.c" />
     <ClCompile Include="pcre\pcre2_valid_utf.c" />
     <ClCompile Include="pcre\pcre2_xclass.c" />
+    <ClCompile Include="ssdeep\fuzzy.c" />
+    <ClCompile Include="tlsh\tlsh.cpp" />
+    <ClCompile Include="tlsh\tlsh_impl.cpp" />
+    <ClCompile Include="tlsh\tlsh_util.cpp" />
+    <ClCompile Include="tlsh\tlsh_wrapper.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="capstone\arch\AArch64\AArch64AddressingModes.h" />
@@ -428,6 +454,23 @@
     <ClInclude Include="capstone\MCRegisterInfo.h" />
     <ClInclude Include="capstone\SStream.h" />
     <ClInclude Include="capstone\utils.h" />
+    <ClInclude Include="gzip\crc32.h" />
+    <ClInclude Include="gzip\crypt.h" />
+    <ClInclude Include="gzip\deflate.h" />
+    <ClInclude Include="gzip\gzguts.h" />
+    <ClInclude Include="gzip\inffast.h" />
+    <ClInclude Include="gzip\inffixed.h" />
+    <ClInclude Include="gzip\inflate.h" />
+    <ClInclude Include="gzip\inftrees.h" />
+    <ClInclude Include="gzip\ioapi.h" />
+    <ClInclude Include="gzip\iowin32.h" />
+    <ClInclude Include="gzip\mztools.h" />
+    <ClInclude Include="gzip\trees.h" />
+    <ClInclude Include="gzip\unzip.h" />
+    <ClInclude Include="gzip\zconf.h" />
+    <ClInclude Include="gzip\zip.h" />
+    <ClInclude Include="gzip\zlib.h" />
+    <ClInclude Include="gzip\zutil.h" />
     <ClInclude Include="jsonc\arraylist.h" />
     <ClInclude Include="jsonc\config.h" />
     <ClInclude Include="jsonc\debug.h" />
@@ -452,6 +495,10 @@
     <ClInclude Include="jsonc\strerror_override.h" />
     <ClInclude Include="jsonc\strerror_override_private.h" />
     <ClInclude Include="jsonc\vasprintf_compat.h" />
+    <ClInclude Include="maxminddb\data-pool.h" />
+    <ClInclude Include="maxminddb\maxminddb-compat-util.h" />
+    <ClInclude Include="maxminddb\maxminddb.h" />
+    <ClInclude Include="maxminddb\maxminddb_config.h" />
     <ClInclude Include="mxml\config.h" />
     <ClInclude Include="mxml\mxml-private.h" />
     <ClInclude Include="mxml\mxml.h" />
@@ -461,6 +508,13 @@
     <ClInclude Include="pcre\pcre2_internal.h" />
     <ClInclude Include="pcre\pcre2_intmodedep.h" />
     <ClInclude Include="pcre\pcre2_ucp.h" />
+    <ClInclude Include="ssdeep\fuzzy.h" />
+    <ClInclude Include="tlsh\tlsh.h" />
+    <ClInclude Include="tlsh\tlsh_impl.h" />
+    <ClInclude Include="tlsh\tlsh_util.h" />
+    <ClInclude Include="tlsh\tlsh_wrapper.h" />
+    <ClInclude Include="tlsh\WinFunctions.h" />
+    <ClInclude Include="tlsh\win_version.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="capstone\arch\AArch64\AArch64GenAsmWriter.inc" />
