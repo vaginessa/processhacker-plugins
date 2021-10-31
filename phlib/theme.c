@@ -200,14 +200,14 @@ VOID PhInitializeWindowTheme(
         {
             PVOID module;
 
-            if (module = PhLoadLibrarySafe(L"dwmapi.dll"))
+            if (module = PhLoadLibrary(L"dwmapi.dll"))
             {
                 DwmSetWindowAttribute_I = PhGetDllBaseProcedureAddress(module, "DwmSetWindowAttribute", 0);
             }
 
             if (WindowsVersion >= WINDOWS_10_19H2)
             {
-                if (module = PhLoadLibrarySafe(L"uxtheme.dll"))
+                if (module = PhLoadLibrary(L"uxtheme.dll"))
                 {
                     AllowDarkModeForWindow_I = PhGetDllBaseProcedureAddress(module, NULL, 133);
                     SetPreferredAppMode_I = PhGetDllBaseProcedureAddress(module, NULL, 135);
@@ -914,7 +914,13 @@ BOOLEAN PhThemeWindowDrawItem(
     case ODT_MENU:
         {
             PPH_EMENU_ITEM menuItemInfo = (PPH_EMENU_ITEM)DrawInfo->itemData;
+            ULONG drawTextFlags = DT_SINGLELINE | DT_NOCLIP;
             HFONT oldFont = NULL;
+
+            if (DrawInfo->itemState & ODS_NOACCEL)
+            {
+                drawTextFlags |= DT_HIDEPREFIX;
+            }
 
             if (PhpMenuFontHandle)
             {
@@ -1115,7 +1121,7 @@ BOOLEAN PhThemeWindowDrawItem(
                         firstPart.Buffer,
                         (UINT)firstPart.Length / sizeof(WCHAR),
                         &DrawInfo->rcItem,
-                        DT_LEFT | DT_CENTER | DT_SINGLELINE | DT_HIDEPREFIX | DT_NOCLIP
+                        DT_LEFT | DT_SINGLELINE | DT_CENTER | DT_VCENTER | drawTextFlags
                         );
                 }
                 else
@@ -1125,7 +1131,7 @@ BOOLEAN PhThemeWindowDrawItem(
                         firstPart.Buffer,
                         (UINT)firstPart.Length / sizeof(WCHAR),
                         &DrawInfo->rcItem,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_HIDEPREFIX | DT_NOCLIP
+                        DT_LEFT | DT_VCENTER | drawTextFlags
                         );
                 }
  
@@ -1135,7 +1141,7 @@ BOOLEAN PhThemeWindowDrawItem(
                     secondPart.Buffer,
                     (UINT)secondPart.Length / sizeof(WCHAR),
                     &DrawInfo->rcItem,
-                    DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_HIDEPREFIX | DT_NOCLIP
+                    DT_RIGHT | DT_VCENTER | drawTextFlags
                     );
             }
 
@@ -1917,6 +1923,39 @@ LRESULT CALLBACK PhpThemeWindowSubclassProc(
     case WM_DRAWITEM:
         if (PhThemeWindowDrawItem((LPDRAWITEMSTRUCT)lParam))
             return TRUE;
+        break;
+    case WM_NCPAINT:
+    case WM_NCACTIVATE:
+        {
+            LRESULT result = CallWindowProc(oldWndProc, hWnd, uMsg, wParam, lParam);
+
+            if (GetMenu(hWnd))
+            {
+                RECT clientRect;
+                RECT windowRect;
+                HDC hdc;
+
+                GetClientRect(hWnd, &clientRect);
+                GetWindowRect(hWnd, &windowRect);
+
+                MapWindowPoints(hWnd, NULL, (PPOINT)&clientRect, 2);
+                OffsetRect(&clientRect, -windowRect.left, -windowRect.top);
+
+                // the rcBar is offset by the window rect (thanks to adzm) (dmex)
+                RECT rcAnnoyingLine = clientRect;
+                rcAnnoyingLine.bottom = rcAnnoyingLine.top;
+                rcAnnoyingLine.top--;
+
+                if (hdc = GetWindowDC(hWnd))
+                {
+                    SetDCBrushColor(hdc, PhThemeWindowBackgroundColor);
+                    FillRect(hdc, &rcAnnoyingLine, GetStockBrush(DC_BRUSH));
+                    ReleaseDC(hWnd, hdc);
+                }
+            }
+
+            return result;
+        }
         break;
     }
 
