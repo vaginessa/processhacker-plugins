@@ -84,13 +84,10 @@ VOID FreeClrProcessSupport(
     _In_ PCLR_PROCESS_SUPPORT Support
     )
 {
-    if (Support->DataProcess)
-        IXCLRDataProcess_Release(Support->DataProcess);
-    if (Support->DataTarget)
-        ICLRDataTarget_Release(Support->DataTarget);
-
-    if (Support->DacDllBase)
-        FreeLibrary(Support->DacDllBase);
+    if (Support->DataProcess) IXCLRDataProcess_Release(Support->DataProcess);
+    // Free the library here so we can cleanup in ICLRDataTarget_Release. (dmex)
+    if (Support->DacDllBase) FreeLibrary(Support->DacDllBase);
+    if (Support->DataTarget) ICLRDataTarget_Release(Support->DataTarget);
 
     PhFree(Support);
 }
@@ -1059,6 +1056,19 @@ typedef struct _CLR_DEBUG_RESOURCE
     ULONG DbiSizeOfImage;
 } CLR_DEBUG_RESOURCE, *PCLR_DEBUG_RESOURCE;
 
+// The first byte of the index is the count of bytes
+typedef unsigned char SYMBOL_INDEX;
+#define RUNTIME_INFO_SIGNATURE "DotNetRuntimeInfo" // EXE export
+
+typedef struct _CLR_RUNTIME_INFO
+{
+    CHAR Signature[18];
+    INT32 Version;
+    SYMBOL_INDEX RuntimeModuleIndex[24];
+    SYMBOL_INDEX DacModuleIndex[24];
+    SYMBOL_INDEX DbiModuleIndex[24];
+} CLR_RUNTIME_INFO, *PCLR_RUNTIME_INFO;
+
 static BOOLEAN NTAPI DnpGetCoreClrPathCallback(
     _In_ PLDR_DATA_TABLE_ENTRY Module,
     _In_ PVOID Context
@@ -1114,30 +1124,33 @@ BOOLEAN DnGetProcessCoreClrPath(
 
     if (!context.FileName)
     {
-        //PPH_PROCESS_ITEM processItem;
-        //
-        //// This image is probably 'SelfContained' since we couldn't find coreclr.dll,
-        //// return the path to the executable so we can check the embedded CLRDEBUGINFO. (dmex)
-        //
-        //if (processItem = PhReferenceProcessItem(ProcessId))
-        //{
-        //    if (!PhIsNullOrEmptyString(processItem->FileName))
-        //    {
-        //        *FileName = PhReferenceObject(processItem->FileName);
-        //        PhDereferenceObject(processItem);
-        //        return TRUE;
-        //    }
-        //
-        //    PhDereferenceObject(processItem);
-        //}
-        //
-        //PPH_STRING fileName;
-        //if (NT_SUCCESS(PhGetProcessImageFileNameByProcessId(ProcessId, &fileName)))
-        //{
-        //    *FileName = fileName;
-        //    return TRUE;
-        //}
+        // This image is probably 'SelfContained' since we couldn't find coreclr.dll,
+        // return the path to the executable so we can check the embedded CLRDEBUGINFO. (dmex)
+#ifdef _WIN64
+        PPH_PROCESS_ITEM processItem;
 
+        if (processItem = PhReferenceProcessItem(ProcessId))
+        {
+            if (!PhIsNullOrEmptyString(processItem->FileName))
+            {
+                *FileName = PhReferenceObject(processItem->FileName);
+                dataTarget->SelfContained = TRUE;
+                PhDereferenceObject(processItem);
+                return TRUE;
+            }
+        
+            PhDereferenceObject(processItem);
+        }
+#else
+        PPH_STRING fileName;
+
+        if (NT_SUCCESS(PhGetProcessImageFileNameByProcessId(ProcessId, &fileName)))
+        {
+            *FileName = fileName;
+            dataTarget->SelfContained = TRUE;
+            return TRUE;
+        }
+#endif
         return FALSE;
     }
 
@@ -1148,6 +1161,30 @@ BOOLEAN DnGetProcessCoreClrPath(
 
     *FileName = context.FileName;
     return TRUE;
+}
+
+static VOID DnCleanupDacAuxiliaryProvider(
+    _In_ ICLRDataTarget* DataTarget
+    )
+{
+    DnCLRDataTarget* dataTarget = (DnCLRDataTarget*)DataTarget;
+
+    if (dataTarget->SelfContained && dataTarget->DaccorePath)
+    {
+        PPH_STRING directoryPath;
+
+        if (directoryPath = PhGetBaseDirectory(dataTarget->DaccorePath))
+        {
+            PhDeleteDirectory(directoryPath);
+            PhDereferenceObject(directoryPath);
+        }
+        else
+        {
+            PhDeleteFileWin32(PhGetString(dataTarget->DaccorePath));
+        }
+    }
+
+    PhClearReference(&dataTarget->DaccorePath);
 }
 
 static BOOLEAN DnpMscordaccoreDirectoryCallback(
@@ -1173,12 +1210,13 @@ static BOOLEAN DnpMscordaccoreDirectoryCallback(
 
 PVOID DnLoadMscordaccore(
     _In_ HANDLE ProcessId,
-    _In_ ICLRDataTarget *Target
+    _In_ ICLRDataTarget *DataTarget
     )
 {
     // \dotnet\shared\Microsoft.NETCore.App\ is the same path used by the CLR for DAC detection. (dmex)
     static PH_STRINGREF mscordaccorePathSr = PH_STRINGREF_INIT(L"%ProgramFiles%\\dotnet\\shared\\Microsoft.NETCore.App\\");
     static PH_STRINGREF mscordaccoreNameSr = PH_STRINGREF_INIT(L"\\mscordaccore.dll");
+    DnCLRDataTarget* dataTarget = (DnCLRDataTarget*)DataTarget;
     PVOID mscordacBaseAddress = NULL;
     HANDLE directoryHandle;
     PPH_LIST directoryList;
@@ -1188,7 +1226,7 @@ PVOID DnLoadMscordaccore(
     ULONG dataTargetTimeStamp = 0;
     ULONG dataTargetSizeOfImage = 0;
 
-    if (DnGetProcessCoreClrPath(ProcessId, Target, &dataTargetFileName))
+    if (DnGetProcessCoreClrPath(ProcessId, DataTarget, &dataTargetFileName))
     {
         PVOID imageBaseAddress;
 
@@ -1218,8 +1256,6 @@ PVOID DnLoadMscordaccore(
         }
 
         dataTargetDirectory = PhGetBaseDirectory(dataTargetFileName);
-
-        PhDereferenceObject(dataTargetFileName);
     }
 
     if (!(directoryPath = PhExpandEnvironmentStrings(&mscordaccorePathSr)))
@@ -1315,7 +1351,105 @@ TryAppLocal:
         PhClearReference(&fileName);
     }
 
+    if (!mscordacBaseAddress && dataTargetFileName && dataTarget->SelfContained)
+    {
+        PVOID imageBaseAddress;
+        PVOID mscordacResourceBuffer;
+        ULONG mscordacResourceLength;
+
+        if (NT_SUCCESS(PhLoadLibraryAsImageResource(dataTargetFileName, &imageBaseAddress)))
+        {
+            if (PhLoadResource(
+                imageBaseAddress,
+                L"MINIDUMP_EMBEDDED_AUXILIARY_PROVIDER",
+                RT_RCDATA,
+                &mscordacResourceLength,
+                &mscordacResourceBuffer
+                ))
+            {
+                static PH_STRINGREF tempFilePath = PH_STRINGREF_INIT(L"%TEMP%\\");
+                NTSTATUS status;
+                HANDLE fileHandle = NULL;
+                LARGE_INTEGER allocationSize;
+                PPH_STRING tempFileName;
+                WCHAR alphaString[32] = L"";
+
+                PhGenerateRandomAlphaString(alphaString, RTL_NUMBER_OF(alphaString));
+                tempFileName = PhExpandEnvironmentStrings(&tempFilePath);
+                tempFileName = PhConcatStringRefZ(&tempFileName->sr, alphaString);
+
+                if (NT_SUCCESS(status = PhCreateDirectory(tempFileName)))
+                {
+                    PhMoveReference(&tempFileName, PhConcatStringRef2(&tempFileName->sr, &mscordaccoreNameSr));
+
+                    allocationSize.QuadPart = mscordacResourceLength;
+                    status = PhCreateFileWin32Ex(
+                        &fileHandle,
+                        PhGetString(tempFileName),
+                        FILE_GENERIC_WRITE,
+                        &allocationSize,
+                        FILE_ATTRIBUTE_NORMAL,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        FILE_CREATE,
+                        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_SEQUENTIAL_ONLY,
+                        NULL
+                        );
+                }
+
+                if (NT_SUCCESS(status) && fileHandle)
+                {
+                    IO_STATUS_BLOCK isb;
+
+                    status = NtWriteFile(
+                        fileHandle,
+                        NULL,
+                        NULL,
+                        NULL,
+                        &isb,
+                        mscordacResourceBuffer,
+                        mscordacResourceLength,
+                        NULL,
+                        NULL
+                        );
+
+                    NtClose(fileHandle);
+                }
+
+                if (NT_SUCCESS(status))
+                {
+                    VERIFY_RESULT verifyResult;
+                    PPH_STRING signerName;
+
+                    verifyResult = PhVerifyFile(
+                        PhGetString(tempFileName),
+                        &signerName
+                        );
+
+                    if (
+                        verifyResult == VrTrusted &&
+                        signerName && PhEqualString2(signerName, L"Microsoft Corporation", TRUE)
+                        )
+                    {
+                        mscordacBaseAddress = PhLoadLibrary(PhGetString(tempFileName));
+                    }
+
+                    if (mscordacBaseAddress)
+                        PhSetReference(&dataTarget->DaccorePath, tempFileName);
+                    else
+                        PhDeleteFileWin32(PhGetString(tempFileName));
+
+                    PhClearReference(&signerName);
+                }
+
+                PhClearReference(&tempFileName);
+            }
+
+            PhFreeLibraryAsImageResource(imageBaseAddress);
+        }
+    }
+
     PhClearReference(&dataTargetDirectory);
+    PhClearReference(&dataTargetFileName);
 
     return mscordacBaseAddress;
 }
@@ -1491,6 +1625,8 @@ ULONG STDMETHODCALLTYPE DnCLRDataTarget_Release(
     {
         NtClose(this->ProcessHandle);
 
+        DnCleanupDacAuxiliaryProvider(This);
+
         PhFree(this);
 
         return 0;
@@ -1594,6 +1730,58 @@ HRESULT STDMETHODCALLTYPE DnCLRDataTarget_GetImageBase(
     }
     else
     {
+        if (this->SelfContained)
+        {
+#ifdef _WIN64
+            PPH_PROCESS_ITEM processItem;
+            PPH_STRING baseName;
+
+            if (processItem = PhReferenceProcessItem(this->ProcessId))
+            {
+                if (!PhIsNullOrEmptyString(processItem->FileName))
+                {
+                    if (baseName = PhGetBaseName(processItem->FileName))
+                    {
+                        context.ImagePath = baseName->sr;
+                        PhEnumProcessModules(this->ProcessHandle, PhpGetImageBaseCallback, &context);
+                        PhDereferenceObject(baseName);
+
+                        if (context.BaseAddress)
+                        {
+                            *baseAddress = (CLRDATA_ADDRESS)context.BaseAddress;
+                            PhDereferenceObject(processItem);
+                            return S_OK;
+                        }
+                    }
+                }
+
+                PhDereferenceObject(processItem);
+            }
+#else
+            PPH_STRING fileName;
+            PPH_STRING baseName;
+
+            if (NT_SUCCESS(PhGetProcessImageFileNameByProcessId(this->ProcessId, &fileName)))
+            {
+                if (baseName = PhGetBaseName(fileName))
+                {
+                    context.ImagePath = baseName->sr;
+                    PhEnumProcessModules(this->ProcessHandle, PhpGetImageBaseCallback, &context);
+                    PhDereferenceObject(baseName);
+
+                    if (context.BaseAddress)
+                    {
+                        *baseAddress = (CLRDATA_ADDRESS)context.BaseAddress;
+                        PhDereferenceObject(fileName);
+                        return S_OK;
+                    }
+                }
+
+                PhDereferenceObject(fileName);
+            }
+#endif
+        }
+
         return E_FAIL;
     }
 }
