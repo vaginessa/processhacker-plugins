@@ -510,7 +510,7 @@ VOID PhInitializeThemeWindowEditControl(
 
     // HACK: The searchbox control does its own themed drawing and it uses the
     // same window context value so we know when to ignore theming.
-    if (PhGetWindowContext(EditControlHandle, LONG_MAX))
+    if (PhGetWindowContext(EditControlHandle, SHRT_MAX))
         return;
 
     editControlWindowProc = (WNDPROC)GetWindowLongPtr(EditControlHandle, GWLP_WNDPROC);
@@ -1706,14 +1706,28 @@ LRESULT CALLBACK PhThemeWindowDrawToolbar(
                     0
                     ))
                 {
-                    DrawInfo->nmcd.rc.left += 5;
+                    LONG x;
+                    LONG y;
+
+                    if (buttonInfo.fsStyle & BTNS_SHOWTEXT)
+                    {
+                        DrawInfo->nmcd.rc.left += 5;
+
+                        x = DrawInfo->nmcd.rc.left;// + ((DrawInfo->nmcd.rc.right - DrawInfo->nmcd.rc.left) - PhSmallIconSize.X) / 2;
+                        y = DrawInfo->nmcd.rc.top + ((DrawInfo->nmcd.rc.bottom - DrawInfo->nmcd.rc.top) - PhSmallIconSize.Y) / 2;
+                    }
+                    else
+                    {
+                        x = DrawInfo->nmcd.rc.left + ((DrawInfo->nmcd.rc.right - DrawInfo->nmcd.rc.left) - PhSmallIconSize.X) / 2;
+                        y = DrawInfo->nmcd.rc.top + ((DrawInfo->nmcd.rc.bottom - DrawInfo->nmcd.rc.top) - PhSmallIconSize.Y) / 2;
+                    }
 
                     PhImageListDrawIcon(
                         toolbarImageList,
                         buttonInfo.iImage,
                         DrawInfo->nmcd.hdc,
-                        DrawInfo->nmcd.rc.left,
-                        DrawInfo->nmcd.rc.top + 3,
+                        x,
+                        y,
                         ILD_NORMAL
                         );
                 }
