@@ -204,13 +204,18 @@ VOID ReBarSaveLayoutSettings(
     VOID
     );
 
+VOID RebarAdjustBandHeightLayout(
+    _In_ LONG Height
+    );
+
+LONG ToolStatusGetWindowFontSize(
+    _In_ HWND WindowHandle,
+    _In_ HFONT WindowFont
+    );
+
 // main.c
 
 HWND GetCurrentTreeNewHandle(
-    VOID
-    );
-
-HFONT ToolStatusGetTreeWindowFont(
     VOID
     );
 

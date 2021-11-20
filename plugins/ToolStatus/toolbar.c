@@ -108,19 +108,13 @@ VOID RebarLoadSettings(
     VOID
     )
 {
+    ToolbarWindowFont = ProcessHacker_GetFont();
+
     if (ToolStatusConfig.ToolBarEnabled && !ToolBarImageList)
     {
         ToolBarImageSize.cx = GetSystemMetrics(SM_CXSMICON);
         ToolBarImageSize.cy = GetSystemMetrics(SM_CYSMICON);
         ToolBarImageList = PhImageListCreate(ToolBarImageSize.cx, ToolBarImageSize.cy, ILC_MASK | ILC_COLOR32, 0, 0);
-
-        HFONT newFont;
-
-        if (newFont = ProcessHacker_GetFont())
-        {
-            if (ToolbarWindowFont) DeleteFont(ToolbarWindowFont);
-            ToolbarWindowFont = newFont;
-        }
     }
 
     if (ToolStatusConfig.ToolBarEnabled && !RebarHandle)
@@ -141,7 +135,7 @@ VOID RebarLoadSettings(
             0,
             TOOLBARCLASSNAME,
             NULL,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | CCS_NOPARENTALIGN | CCS_NODIVIDER | TBSTYLE_FLAT | TBSTYLE_LIST | TBSTYLE_TRANSPARENT | TBSTYLE_TOOLTIPS | TBSTYLE_AUTOSIZE,
+            WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | CCS_NOPARENTALIGN | CCS_NODIVIDER | TBSTYLE_FLAT | TBSTYLE_LIST | TBSTYLE_TRANSPARENT | TBSTYLE_TOOLTIPS | TBSTYLE_AUTOSIZE,
             0, 0, 0, 0,
             RebarHandle,
             NULL,
@@ -165,9 +159,19 @@ VOID RebarLoadSettings(
         // Resize the toolbar.
         SendMessage(ToolBarHandle, TB_AUTOSIZE, 0, 0);
 
-        // Inset the toolbar into the rebar control.
-        ULONG toolbarButtonSize = (ULONG)SendMessage(ToolBarHandle, TB_GETBUTTONSIZE, 0, 0);
-        RebarBandInsert(REBAR_BAND_ID_TOOLBAR, ToolBarHandle, LOWORD(toolbarButtonSize), HIWORD(toolbarButtonSize));
+        // Inset the toolbar into the rebar control, also
+        // determine the font size and adjust the toolbar height.
+        {
+            ULONG toolbarButtonSize = (ULONG)SendMessage(ToolBarHandle, TB_GETBUTTONSIZE, 0, 0);
+            LONG toolbarButtonHeight = ToolStatusGetWindowFontSize(ToolBarHandle, ToolbarWindowFont);
+
+            RebarBandInsert(REBAR_BAND_ID_TOOLBAR, ToolBarHandle, LOWORD(toolbarButtonSize), __max(HIWORD(toolbarButtonSize), toolbarButtonHeight));
+
+            if (HIWORD(toolbarButtonSize) < toolbarButtonHeight)
+            {
+                SendMessage(ToolBarHandle, TB_SETBUTTONSIZE, 0, MAKELPARAM(0, toolbarButtonHeight));
+            }
+        }
     }
 
     if (ToolStatusConfig.SearchBoxEnabled && !SearchboxHandle)
@@ -215,6 +219,19 @@ VOID RebarLoadSettings(
         // Configure the statusbar font.
         SetWindowFont(StatusBarHandle, ToolbarWindowFont, FALSE);
 
+        // Determine the font size and adjust the statusbar height.
+        {
+            LONG height = ToolStatusGetWindowFontSize(StatusBarHandle, ToolbarWindowFont);
+            RECT statusBarRect;
+
+            GetClientRect(StatusBarHandle, &statusBarRect);
+
+            if (statusBarRect.bottom < height)
+            {
+                SendMessage(StatusBarHandle, SB_SETMINHEIGHT, height, 0);
+            }
+        }
+
         if (StatusBarHandle && PhGetIntegerSetting(L"EnableThemeSupport"))
         {
             PhInitializeWindowThemeStatusBar(StatusBarHandle);
@@ -235,7 +252,7 @@ VOID RebarLoadSettings(
 
     if (ToolStatusConfig.SearchBoxEnabled && RebarHandle && SearchboxHandle)
     {
-        UINT height = (UINT)SendMessage(RebarHandle, RB_GETROWHEIGHT, 0, 0);
+        UINT height = (UINT)SendMessage(RebarHandle, RB_GETROWHEIGHT, REBAR_BAND_ID_TOOLBAR, 0);
 
         // Add the Searchbox band into the rebar control.
         if (!RebarBandExists(REBAR_BAND_ID_SEARCHBOX))
@@ -909,4 +926,53 @@ VOID ReBarSaveLayoutSettings(
 
     settingsString = PH_AUTO(PhFinalStringBuilderString(&stringBuilder));
     PhSetStringSetting2(SETTING_NAME_REBAR_CONFIG, &settingsString->sr);
+}
+
+VOID RebarAdjustBandHeightLayout(
+    _In_ LONG Height
+    )
+{
+    UINT index;
+    UINT count;
+
+    count = (UINT)SendMessage(RebarHandle, RB_GETBANDCOUNT, 0, 0);
+
+    for (index = 0; index < count; index++)
+    {
+        REBARBANDINFO rebarBandInfo =
+        {
+            sizeof(REBARBANDINFO),
+            RBBIM_CHILDSIZE
+        };
+
+        SendMessage(RebarHandle, RB_GETBANDINFO, index, (LPARAM)&rebarBandInfo);
+        rebarBandInfo.cyMinChild = Height;
+        SendMessage(RebarHandle, RB_SETBANDINFO, index, (LPARAM)&rebarBandInfo);
+    }
+}
+
+LONG ToolStatusGetWindowFontSize(
+    _In_ HWND WindowHandle,
+    _In_ HFONT WindowFont
+    )
+{
+    LONG height = 0;
+    TEXTMETRIC textMetrics;
+    HDC hdc;
+
+    if (hdc = GetDC(WindowHandle))
+    {
+        SelectFont(hdc, WindowFont);
+        GetTextMetrics(hdc, &textMetrics);
+
+        // Below we try to match the height as calculated by the toolbar, even if it
+        // involves magic numbers. On Vista and above there seems to be extra padding.
+
+        height = textMetrics.tmHeight;
+        ReleaseDC(WindowHandle, hdc);
+    }
+
+    height += 5; // Add magic padding
+
+    return height;
 }
