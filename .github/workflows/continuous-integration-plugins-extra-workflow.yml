@@ -4,7 +4,7 @@ jobs:
   #64-bit windows build --
   build-win:
     name: Windows
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
     - name: Checkout
       uses: actions/checkout@v2
