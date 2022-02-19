@@ -362,6 +362,8 @@ typedef struct _ET_PROCESS_BLOCK
     FLOAT FramesMsUntilRenderComplete;
     FLOAT FramesMsUntilDisplayed;
     FLOAT FramesDisplayLatency;
+    USHORT FramesRuntime;
+    USHORT FramesPresentMode;
     PH_CIRCULAR_BUFFER_FLOAT FramesPerSecondHistory;
     PH_CIRCULAR_BUFFER_FLOAT FramesLatencyHistory;
     PH_CIRCULAR_BUFFER_FLOAT FramesMsBetweenPresentsHistory;
@@ -886,7 +888,9 @@ typedef struct _FW_EVENT_ITEM
         struct
         {
             BOOLEAN Loopback : 1;
-            BOOLEAN Spare : 7;
+            BOOLEAN Spare : 5;
+            BOOLEAN LocalHostnameResolved : 1;
+            BOOLEAN RemoteHostnameResolved : 1;
         };
     };
 
