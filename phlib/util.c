@@ -3,7 +3,7 @@
  *   general support functions
  *
  * Copyright (C) 2009-2016 wj32
- * Copyright (C) 2017-2021 dmex
+ * Copyright (C) 2017-2022 dmex
  *
  * This file is part of Process Hacker.
  *
@@ -6413,6 +6413,23 @@ PPH_STRING PhGetDllFileName(
     return fileName;
 }
 
+PVOID PhGetLoaderEntryStringRefDllBase(
+    _In_opt_ PPH_STRINGREF FullDllName,
+    _In_opt_ PPH_STRINGREF BaseDllName
+    )
+{
+    PLDR_DATA_TABLE_ENTRY ldrEntry;
+
+    RtlEnterCriticalSection(NtCurrentPeb()->LoaderLock);
+    ldrEntry = PhFindLoaderEntry(NULL, FullDllName, BaseDllName);
+    RtlLeaveCriticalSection(NtCurrentPeb()->LoaderLock);
+
+    if (ldrEntry)
+        return ldrEntry->DllBase;
+    else
+        return NULL;
+}
+
 PVOID PhGetLoaderEntryDllBase(
     _In_ PWSTR BaseDllName
     )
@@ -6424,25 +6441,6 @@ PVOID PhGetLoaderEntryDllBase(
 
     RtlEnterCriticalSection(NtCurrentPeb()->LoaderLock);
     ldrEntry = PhFindLoaderEntry(NULL, NULL, &entryNameSr);
-    RtlLeaveCriticalSection(NtCurrentPeb()->LoaderLock);
-
-    if (ldrEntry)
-        return ldrEntry->DllBase;
-    else
-        return NULL;
-}
-
-PVOID PhGetLoaderEntryFullDllBase(
-    _In_ PWSTR FullDllName
-    )
-{
-    PH_STRINGREF entryNameSr;
-    PLDR_DATA_TABLE_ENTRY ldrEntry;
-
-    PhInitializeStringRefLongHint(&entryNameSr, FullDllName);
-
-    RtlEnterCriticalSection(NtCurrentPeb()->LoaderLock);
-    ldrEntry = PhFindLoaderEntry(NULL, &entryNameSr, NULL);
     RtlLeaveCriticalSection(NtCurrentPeb()->LoaderLock);
 
     if (ldrEntry)
@@ -6688,6 +6686,47 @@ NTSTATUS PhLoaderEntryImageRvaToVa(
     return STATUS_SUCCESS;
 }
 
+static ULONG PhpLookupLoaderEntryImageExportFunctionIndex(
+    _In_ PVOID BaseAddress,
+    _In_ PIMAGE_EXPORT_DIRECTORY ExportDirectory,
+    _In_ PULONG ExportNameTable,
+    _In_ PSTR ExportName
+    )
+{
+    LONG low;
+    LONG high;
+    LONG i;
+
+    if (ExportDirectory->NumberOfNames == 0)
+        return ULONG_MAX;
+
+    low = 0;
+    high = ExportDirectory->NumberOfNames - 1;
+
+    do
+    {
+        PSTR name;
+        INT comparison;
+
+        i = (low + high) / 2;
+        name = PTR_ADD_OFFSET(BaseAddress, ExportNameTable[i]);
+
+        if (!name)
+            return ULONG_MAX;
+
+        comparison = strcmp(ExportName, name);
+
+        if (comparison == 0)
+            return i;
+        else if (comparison < 0)
+            high = i - 1;
+        else
+            low = i + 1;
+    } while (low <= high);
+
+    return ULONG_MAX;
+}
+
 PVOID PhGetLoaderEntryImageExportFunction(
     _In_ PVOID BaseAddress,
     _In_ PIMAGE_DATA_DIRECTORY DataDirectory,
@@ -6714,13 +6753,29 @@ PVOID PhGetLoaderEntryImageExportFunction(
     }
     else if (ExportName)
     {
-        for (ULONG i = 0; i < ExportDirectory->NumberOfNames; i++)
+        ULONG exportIndex;
+
+        exportIndex = PhpLookupLoaderEntryImageExportFunctionIndex(
+            BaseAddress,
+            ExportDirectory,
+            exportNameTable,
+            ExportName
+            );
+
+        if (exportIndex == ULONG_MAX)
         {
-            if (PhEqualBytesZ(ExportName, PTR_ADD_OFFSET(BaseAddress, exportNameTable[i]), FALSE))
+            for (exportIndex = 0; exportIndex < ExportDirectory->NumberOfNames; exportIndex++)
             {
-                exportAddress = PTR_ADD_OFFSET(BaseAddress, exportAddressTable[exportOrdinalTable[i]]);
-                break;
+                if (PhEqualBytesZ(ExportName, PTR_ADD_OFFSET(BaseAddress, exportNameTable[exportIndex]), FALSE))
+                {
+                    exportAddress = PTR_ADD_OFFSET(BaseAddress, exportAddressTable[exportOrdinalTable[exportIndex]]);
+                    break;
+                }
             }
+        }
+        else
+        {
+            exportAddress = PTR_ADD_OFFSET(BaseAddress, exportAddressTable[exportOrdinalTable[exportIndex]]);
         }
     }
 
@@ -6742,18 +6797,23 @@ PVOID PhGetLoaderEntryImageExportFunction(
 
         if (PhSplitStringRefAtChar(&dllForwarderString->sr, L'.', &dllNameRef, &dllProcedureRef))
         {
-            PPH_STRING libraryNameString;
-            PPH_BYTES libraryFunctionString;
-            PVOID libraryModule;
+            PVOID libraryDllBase;
 
-            libraryNameString = PhCreateStringEx(dllNameRef.Buffer, dllNameRef.Length);
-            libraryFunctionString = PhConvertUtf16ToUtf8Ex(dllProcedureRef.Buffer, dllProcedureRef.Length);
-
-            if (!(libraryModule = PhGetLoaderEntryDllBase(libraryNameString->Buffer)))
-                libraryModule = PhLoadLibrary(libraryNameString->Buffer);
-
-            if (libraryModule)
+            if (!(libraryDllBase = PhGetLoaderEntryStringRefDllBase(NULL, &dllNameRef)))
             {
+                PPH_STRING libraryName;
+
+                libraryName = PhCreateString2(&dllNameRef);
+                libraryDllBase = PhLoadLibrary(libraryName->Buffer);
+                PhDereferenceObject(libraryName);
+            }
+
+            if (libraryDllBase)
+            {
+                PPH_BYTES libraryFunctionString;
+
+                libraryFunctionString = PhConvertUtf16ToUtf8Ex(dllProcedureRef.Buffer, dllProcedureRef.Length);
+
                 if (libraryFunctionString->Buffer[0] == L'#') // This is a forwarder RVA with an ordinal import.
                 {
                     LONG64 importOrdinal;
@@ -6761,18 +6821,17 @@ PVOID PhGetLoaderEntryImageExportFunction(
                     PhSkipStringRef(&dllProcedureRef, sizeof(L'#'));
 
                     if (PhStringToInteger64(&dllProcedureRef, 10, &importOrdinal))
-                        exportAddress = PhGetDllBaseProcedureAddress(libraryModule, NULL, (USHORT)importOrdinal);
+                        exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, NULL, (USHORT)importOrdinal);
                     else
-                        exportAddress = PhGetDllBaseProcedureAddress(libraryModule, libraryFunctionString->Buffer, 0);
+                        exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, libraryFunctionString->Buffer, 0);
                 }
                 else
                 {
-                    exportAddress = PhGetDllBaseProcedureAddress(libraryModule, libraryFunctionString->Buffer, 0);
+                    exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, libraryFunctionString->Buffer, 0);
                 }
-            }
 
-            PhDereferenceObject(libraryFunctionString);
-            PhDereferenceObject(libraryNameString);
+                PhDereferenceObject(libraryFunctionString);
+            }
         }
 
         PhDereferenceObject(dllForwarderString);
@@ -6838,18 +6897,23 @@ PVOID PhGetDllBaseProcedureAddressWithHint(
 
                 if (PhSplitStringRefAtChar(&dllForwarderString->sr, L'.', &dllNameRef, &dllProcedureRef))
                 {
-                    PPH_STRING libraryNameString;
-                    PPH_BYTES libraryFunctionString;
-                    PVOID libraryModule;
+                    PVOID libraryDllBase;
 
-                    libraryNameString = PhCreateStringEx(dllNameRef.Buffer, dllNameRef.Length);
-                    libraryFunctionString = PhConvertUtf16ToUtf8Ex(dllProcedureRef.Buffer, dllProcedureRef.Length);
-
-                    if (!(libraryModule = PhGetLoaderEntryDllBase(libraryNameString->Buffer)))
-                        libraryModule = PhLoadLibrary(libraryNameString->Buffer);
-
-                    if (libraryModule)
+                    if (!(libraryDllBase = PhGetLoaderEntryStringRefDllBase(NULL, &dllNameRef)))
                     {
+                        PPH_STRING libraryName;
+
+                        libraryName = PhCreateString2(&dllNameRef);
+                        libraryDllBase = PhLoadLibrary(libraryName->Buffer);
+                        PhDereferenceObject(libraryName);
+                    }
+
+                    if (libraryDllBase)
+                    {
+                        PPH_BYTES libraryFunctionString;
+
+                        libraryFunctionString = PhConvertUtf16ToUtf8Ex(dllProcedureRef.Buffer, dllProcedureRef.Length);
+
                         if (libraryFunctionString->Buffer[0] == L'#') // This is a forwarder RVA with an ordinal import.
                         {
                             LONG64 importOrdinal;
@@ -6857,18 +6921,17 @@ PVOID PhGetDllBaseProcedureAddressWithHint(
                             PhSkipStringRef(&dllProcedureRef, sizeof(L'#'));
 
                             if (PhStringToInteger64(&dllProcedureRef, 10, &importOrdinal))
-                                exportAddress = PhGetDllBaseProcedureAddress(libraryModule, NULL, (USHORT)importOrdinal);
+                                exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, NULL, (USHORT)importOrdinal);
                             else
-                                exportAddress = PhGetDllBaseProcedureAddress(libraryModule, libraryFunctionString->Buffer, 0);
+                                exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, libraryFunctionString->Buffer, 0);
                         }
                         else
                         {
-                            exportAddress = PhGetDllBaseProcedureAddress(libraryModule, libraryFunctionString->Buffer, 0);
+                            exportAddress = PhGetDllBaseProcedureAddress(libraryDllBase, libraryFunctionString->Buffer, 0);
                         }
-                    }
 
-                    PhDereferenceObject(libraryFunctionString);
-                    PhDereferenceObject(libraryNameString);
+                        PhDereferenceObject(libraryFunctionString);
+                    }
                 }
 
                 PhDereferenceObject(dllForwarderString);
@@ -6949,7 +7012,7 @@ static NTSTATUS PhpFixupLoaderEntryImageImports(
 
             importNameSr = PhZeroExtendToUtf16(importName);
 
-            if (!(importBaseAddress = PhGetLoaderEntryDllBase(importNameSr->Buffer)))
+            if (!(importBaseAddress = PhGetLoaderEntryStringRefDllBase(NULL, &importNameSr->sr)))
             {
                 if (importBaseAddress = PhLoadLibrary(importNameSr->Buffer))
                     status = STATUS_SUCCESS;
@@ -7147,7 +7210,7 @@ static NTSTATUS PhpFixupLoaderEntryImageDelayImports(
 
                 importNameSr = PhZeroExtendToUtf16(importName);
 
-                if (!(importBaseAddress = PhGetLoaderEntryDllBase(importNameSr->Buffer)))
+                if (!(importBaseAddress = PhGetLoaderEntryStringRefDllBase(NULL, &importNameSr->sr)))
                 {
                     if (importBaseAddress = PhLoadLibrary(importNameSr->Buffer))
                     {
@@ -7403,9 +7466,9 @@ NTSTATUS PhLoaderEntryLoadDll(
     PVOID imageBaseAddress;
     SIZE_T imageBaseOffset;
 
-    status = PhCreateFile(
+    status = PhCreateFileWin32(
         &fileHandle,
-        FileName,
+        FileName->Buffer,
         FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE,
         FILE_ATTRIBUTE_NORMAL,
         FILE_SHARE_READ,
@@ -7452,7 +7515,7 @@ NTSTATUS PhLoaderEntryLoadDll(
         0,
         NULL,
         &imageBaseOffset,
-        ViewUnmap,
+        ViewShare,
         0,
         PAGE_EXECUTE
         );
@@ -7580,13 +7643,8 @@ NTSTATUS PhLoadPluginImage(
         &imageBaseAddress
         );
 
-    //NTSTATUS status;
-    //PVOID imageBaseAddress;
-    //PIMAGE_NT_HEADERS imageNtHeaders;
-    //PLDR_INIT_ROUTINE imageEntryRoutine;
-
     //status = PhLoaderEntryLoadDll(
-    //    FileName->Buffer,
+    //    FileName,
     //    &imageBaseAddress
     //    );
 
@@ -8026,7 +8084,7 @@ ULONGLONG PhReadTimeStampCounter(
 #elif _M_ARM
     return __rdpmccntr64();
 #elif _M_ARM64
-    // The Windows SDK uses PMCCNTR on ARM64 instead of CNTVCT? (dmex)
+    // The ReadTimeStampCounter() macro uses PMCCNTR on ARM64 instead of CNTVCT? (dmex)
     return _ReadStatusReg(ARM64_CNTVCT);
 #endif
 }
@@ -8105,8 +8163,8 @@ PPH_STRING PhApiSetResolveToHost(
     if (apisetMap->Version != 6)
         return NULL;
 
-	for (ULONG i = 0; i < apisetMap->Count; i++)
-	{
+    for (ULONG i = 0; i < apisetMap->Count; i++)
+    {
         PAPI_SET_VALUE_ENTRY apisetMapValue = PTR_ADD_OFFSET(apisetMap, apisetMapEntry->ValueOffset);
         PH_STRINGREF nameStringRef;
 
@@ -8132,7 +8190,7 @@ PPH_STRING PhApiSetResolveToHost(
         }
 
         apisetMapEntry++;
-	}
+    }
 
-	return NULL;
+    return NULL;
 }
