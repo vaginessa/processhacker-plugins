@@ -850,51 +850,38 @@ VOID PhpQueryHostnameForEntry(
 }
 
 PPH_PROCESS_ITEM EtFwFileNameToProcess(
-    _In_ PPH_STRING ProcessBaseString
+    _In_ PPH_STRING ProcessFileName
     )
 {
-    static PVOID processInfo = NULL;
-    static ULONG64 lastTickTotal = 0;
-    PSYSTEM_PROCESS_INFORMATION process;
-    ULONG64 tickCount = NtGetTickCount64();
+    PPH_PROCESS_ITEM* processItems;
+    ULONG numberOfProcessItems;
 
-    if (tickCount - lastTickTotal >= 120 * 1000)
+    if (
+        ProcessFileName->Length == 12 &&
+        PhEqualString2(ProcessFileName, L"System", TRUE)
+        )
     {
-        lastTickTotal = tickCount;
+        return PhReferenceProcessItem(SYSTEM_PROCESS_ID);
+    }
 
-        if (processInfo)
+    PhEnumProcessItems(&processItems, &numberOfProcessItems);
+
+    for (ULONG i = 0; i < numberOfProcessItems; i++)
+    {
+        if (
+            processItems[i]->FileName &&
+            PhEqualString(processItems[i]->FileName, ProcessFileName, TRUE)
+            )
         {
-            PhFree(processInfo);
-            processInfo = NULL;
+            PVOID object = PhReferenceObject(processItems[i]);
+            PhDereferenceObjects(processItems, numberOfProcessItems);
+            PhFree(processItems);
+            return object;
         }
-
-        PhEnumProcesses(&processInfo);
     }
 
-    if (!processInfo)
-    {
-        PhEnumProcesses(&processInfo);
-    }
-
-    if (process = PhFindProcessInformationByImageName(processInfo, &ProcessBaseString->sr))
-    {
-        return PhReferenceProcessItem(process->UniqueProcessId);
-    }
-
-    lastTickTotal = tickCount;
-
-    if (processInfo)
-    {
-        PhFree(processInfo);
-        processInfo = NULL;
-    }
-
-    PhEnumProcesses(&processInfo);
-
-    if (process = PhFindProcessInformationByImageName(processInfo, &ProcessBaseString->sr))
-    {
-        return PhReferenceProcessItem(process->UniqueProcessId);
-    }
+    PhDereferenceObjects(processItems, numberOfProcessItems);
+    PhFree(processItems);
 
     return NULL;
 }
@@ -1694,21 +1681,19 @@ VOID CALLBACK EtFwEventCallback(
 
     if (FwEvent->header.flags & FWPM_NET_EVENT_FLAG_APP_ID_SET)
     {
-        if (FwEvent->header.appId.data && FwEvent->header.appId.size)
+        if (FwEvent->header.appId.data && FwEvent->header.appId.size > sizeof(UNICODE_NULL))
         {
             PPH_STRING fileName;
 
-            fileName = PhCreateStringEx((PWSTR)FwEvent->header.appId.data, (SIZE_T)FwEvent->header.appId.size);
+            fileName = PhCreateStringEx(
+                (PWSTR)FwEvent->header.appId.data,
+                (SIZE_T)FwEvent->header.appId.size - sizeof(UNICODE_NULL)
+                );
+
             entry.ProcessFileName = PhGetFileName(fileName);
-
-            PhDereferenceObject(fileName);
-        }
-
-        if (entry.ProcessFileName)
-        {
             entry.ProcessBaseString = PhGetBaseName(entry.ProcessFileName);
 
-            if (entry.ProcessItem = EtFwFileNameToProcess(entry.ProcessBaseString))
+            if (entry.ProcessItem = EtFwFileNameToProcess(fileName))
             {
                 // We get a lower case filename from the firewall netevent which is inconsistent
                 // with the file_object paths we get elsewhere. Switch the filename here
@@ -1717,6 +1702,8 @@ VOID CALLBACK EtFwEventCallback(
                 PhSwapReference(&entry.ProcessFileNameWin32, entry.ProcessItem->FileNameWin32);
                 PhSwapReference(&entry.ProcessBaseString, entry.ProcessItem->ProcessName);
             }
+
+            PhDereferenceObject(fileName);
         }
     }
 
