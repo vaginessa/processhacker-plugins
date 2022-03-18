@@ -3,7 +3,7 @@
  *   program settings cache
  *
  * Copyright (C) 2010-2016 wj32
- * Copyright (C) 2017-2021 dmex
+ * Copyright (C) 2017-2022 dmex
  * Copyright (C) 2021 jxy-s
  *
  * This file is part of Process Hacker.
@@ -89,6 +89,9 @@ VOID PhAddDefaultSettings(
     PhpAddIntegerSetting(L"HandleTreeListFlags", L"3");
     PhpAddIntegerPairSetting(L"HandlePropertiesWindowPosition", L"0,0");
     PhpAddScalableIntegerPairSetting(L"HandlePropertiesWindowSize", L"@96|260,260");
+    PhpAddStringSetting(L"HandleStatisticsListViewColumns", L"");
+    PhpAddStringSetting(L"HandleStatisticsListViewSort", L"0,1");
+    PhpAddScalableIntegerPairSetting(L"HandleStatisticsWindowSize", L"@96|0,0");
     PhpAddIntegerSetting(L"HiddenProcessesMenuEnabled", L"0");
     PhpAddStringSetting(L"HiddenProcessesListViewColumns", L"");
     PhpAddIntegerPairSetting(L"HiddenProcessesWindowPosition", L"400,400");
@@ -125,6 +128,7 @@ VOID PhAddDefaultSettings(
     PhpAddIntegerSetting(L"MainWindowTabRestoreEnabled", L"0");
     PhpAddIntegerSetting(L"MainWindowTabRestoreIndex", L"0");
     PhpAddIntegerSetting(L"MaxSizeUnit", L"6");
+    PhpAddIntegerSetting(L"MaxPrecisionUnit", L"2");
     PhpAddIntegerSetting(L"MemEditBytesPerRow", L"10"); // 16
     PhpAddStringSetting(L"MemEditGotoChoices", L"");
     PhpAddIntegerPairSetting(L"MemEditPosition", L"450,450");

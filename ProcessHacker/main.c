@@ -877,8 +877,6 @@ BOOLEAN PhInitializeMitigationPolicy(
 
     if (WindowsVersion < WINDOWS_10_RS3)
         return TRUE;
-    if (!PhpIsExploitProtectionEnabled())
-        return TRUE;
 
     PhUnicodeStringToStringRef(&NtCurrentPeb()->ProcessParameters->CommandLine, &commandlineSr);
     //if (!NT_SUCCESS(PhGetProcessCommandLine(NtCurrentProcess(), &commandline)))
@@ -910,17 +908,39 @@ BOOLEAN PhInitializeMitigationPolicy(
     //        );
     //}
 
-    if (!InitializeProcThreadAttributeList(NULL, 1, 0, &attributeListLength) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+    if (!InitializeProcThreadAttributeList(NULL, 2, 0, &attributeListLength) && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
         goto CleanupExit;
 
     startupInfo.lpAttributeList = PhAllocate(attributeListLength);
 
-    if (!InitializeProcThreadAttributeList(startupInfo.lpAttributeList, 1, 0, &attributeListLength))
+    if (!InitializeProcThreadAttributeList(startupInfo.lpAttributeList, 2, 0, &attributeListLength))
         goto CleanupExit;
     if (!UpdateProcThreadAttribute(startupInfo.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &(ULONG64){ DEFAULT_MITIGATION_POLICY_FLAGS }, sizeof(ULONG64), NULL, NULL))
         goto CleanupExit;
     //if (!UpdateProcThreadAttribute(startupInfo.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobObjectHandle, sizeof(HANDLE), NULL, NULL))
     //    goto CleanupExit;
+
+    {
+        PROC_THREAD_BNOISOLATION_ATTRIBUTE bnoIsolation;
+        WCHAR alphastring[16] = L"";
+
+        bnoIsolation.IsolationEnabled = TRUE;
+        PhGenerateRandomAlphaString(alphastring, RTL_NUMBER_OF(alphastring));
+        wcscpy_s(bnoIsolation.IsolationPrefix, RTL_NUMBER_OF(bnoIsolation.IsolationPrefix), alphastring);
+
+        if (!UpdateProcThreadAttribute(
+            startupInfo.lpAttributeList,
+            0,
+            PROC_THREAD_ATTRIBUTE_BNO_ISOLATION,
+            &bnoIsolation,
+            sizeof(PROC_THREAD_BNOISOLATION_ATTRIBUTE),
+            NULL,
+            NULL
+            ))
+        {
+            goto CleanupExit;
+        }
+    }
 
     if (NT_SUCCESS(PhCreateProcessWin32Ex(
         NULL,
@@ -1409,6 +1429,7 @@ VOID PhpInitializeSettings(
     // Apply basic global settings.
     PhPluginsEnabled = !!PhGetIntegerSetting(L"EnablePlugins");
     PhMaxSizeUnit = PhGetIntegerSetting(L"MaxSizeUnit");
+    PhMaxPrecisionUnit = (USHORT)PhGetIntegerSetting(L"MaxPrecisionUnit");
 
     if (PhGetIntegerSetting(L"SampleCountAutomatic"))
     {
@@ -1768,6 +1789,61 @@ VOID PhpEnablePrivileges(
 // breaking backwards compatibility. (dmex)
 // TODO: Move to a better location. (dmex)
 
+PH_QUEUED_LOCK PhDelayLoadImportLock = PH_QUEUED_LOCK_INIT;
+ULONG PhDelayLoadOldProtection = PAGE_WRITECOPY;
+ULONG PhDelayLoadLockCount = 0;
+
+// based on \MSVC\14.31.31103\include\dloadsup.h (dmex)
+VOID PhDelayLoadImportAcquire(
+    _In_ PVOID ImportDirectorySectionAddress,
+    _In_ SIZE_T ImportDirectorySectionSize
+    )
+{
+    PhAcquireQueuedLockExclusive(&PhDelayLoadImportLock);
+    PhDelayLoadLockCount += 1;
+
+    if (PhDelayLoadLockCount == 1)
+    {
+        NTSTATUS status;
+
+        if (!NT_SUCCESS(status = NtProtectVirtualMemory(
+            NtCurrentProcess(),
+            &ImportDirectorySectionAddress,
+            &ImportDirectorySectionSize,
+            PAGE_READWRITE,
+            &PhDelayLoadOldProtection
+            )))
+        {
+            PhRaiseStatus(status);
+        }
+    }
+
+    PhReleaseQueuedLockExclusive(&PhDelayLoadImportLock);
+}
+
+VOID PhDelayLoadImportRelease(
+    _In_ PVOID ImportDirectorySectionAddress,
+    _In_ SIZE_T ImportDirectorySectionSize
+    )
+{
+    PhAcquireQueuedLockExclusive(&PhDelayLoadImportLock);
+    PhDelayLoadLockCount -= 1;
+
+    if (PhDelayLoadLockCount == 0)
+    {
+        ULONG importSectionOldProtection;
+        NtProtectVirtualMemory(
+            NtCurrentProcess(),
+            &ImportDirectorySectionAddress,
+            &ImportDirectorySectionSize,
+            PhDelayLoadOldProtection,
+            &importSectionOldProtection
+            );
+    }
+
+    PhReleaseQueuedLockExclusive(&PhDelayLoadImportLock);
+}
+
 _Success_(return != NULL)
 PVOID WINAPI __delayLoadHelper2(
     _In_ PIMAGE_DELAYLOAD_DESCRIPTOR Entry,
@@ -1785,7 +1861,6 @@ PVOID WINAPI __delayLoadHelper2(
     PIMAGE_NT_HEADERS imageNtHeaders;
     SIZE_T importDirectorySectionSize;
     PVOID importDirectorySectionAddress;
-    ULONG importSectionProtect;
 
     importDllName = PTR_ADD_OFFSET(PhInstanceHandle, Entry->DllNameRVA);
     importHandle = PTR_ADD_OFFSET(PhInstanceHandle, Entry->ModuleHandleRVA);
@@ -1841,29 +1916,9 @@ PVOID WINAPI __delayLoadHelper2(
         return NULL;
     }
 
-    if (!NT_SUCCESS(NtProtectVirtualMemory(
-        NtCurrentProcess(),
-        &importDirectorySectionAddress,
-        &importDirectorySectionSize,
-        PAGE_READWRITE,
-        &importSectionProtect
-        )))
-    {
-        return NULL;
-    }
-
+    PhDelayLoadImportAcquire(importDirectorySectionAddress, importDirectorySectionSize);
     InterlockedExchangePointer(ImportAddress, procedureAddress);
-
-    if (!NT_SUCCESS(NtProtectVirtualMemory(
-        NtCurrentProcess(),
-        &importDirectorySectionAddress,
-        &importDirectorySectionSize,
-        importSectionProtect,
-        &importSectionProtect
-        )))
-    {
-        return NULL;
-    }
+    PhDelayLoadImportRelease(importDirectorySectionAddress, importDirectorySectionSize);
 
     if ((InterlockedExchangePointer(importHandle, moduleHandle) == moduleHandle) && importNeedsFree)
     {
