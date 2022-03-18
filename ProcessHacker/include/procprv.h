@@ -209,7 +209,7 @@ typedef struct _PH_PROCESS_ITEM
     PH_UINT64_DELTA IoReadCountDelta;
     PH_UINT64_DELTA IoWriteCountDelta;
     PH_UINT64_DELTA IoOtherCountDelta;
-    PH_UINT32_DELTA ContextSwitchesDelta;
+    PH_UINT64_DELTA ContextSwitchesDelta;
     PH_UINT32_DELTA PageFaultsDelta;
     PH_UINT32_DELTA HardFaultsDelta;
     PH_UINT64_DELTA CycleTimeDelta; // since WIN7
@@ -234,10 +234,14 @@ typedef struct _PH_PROCESS_ITEM
     PPH_STRING PackageFullName;
     PPH_STRING UserName;
 
+    PROCESS_DISK_COUNTERS DiskCounters;
+    ULONGLONG ContextSwitches;
+
     ULONGLONG ProcessSequenceNumber;
     PH_KNOWN_PROCESS_TYPE KnownProcessType;
     PS_PROTECTION Protection;
     ULONG JobObjectId;
+    SIZE_T SharedCommitCharge;
 
     PPH_IMAGELIST_ITEM IconEntry;
 
