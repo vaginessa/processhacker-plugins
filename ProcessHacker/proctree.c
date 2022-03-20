@@ -235,7 +235,9 @@ VOID PhInitializeProcessTreeList(
     PhAddTreeNewColumnEx(hwnd, PHPRTLC_POWERTHROTTLING, FALSE, L"Power throttling", 70, PH_ALIGN_LEFT, ULONG_MAX, 0, TRUE);
     PhAddTreeNewColumnEx(hwnd, PHPRTLC_ARCHITECTURE, FALSE, L"Architecture", 70, PH_ALIGN_LEFT, ULONG_MAX, 0, TRUE);
     PhAddTreeNewColumn(hwnd, PHPRTLC_PARENTPID, TRUE, L"Parent PID", 50, PH_ALIGN_RIGHT, 0, DT_RIGHT);
+    PhAddTreeNewColumn(hwnd, PHPRTLC_PARENTCONSOLEPID, TRUE, L"Parent console PID", 50, PH_ALIGN_RIGHT, 0, DT_RIGHT);
     PhAddTreeNewColumnEx(hwnd, PHPRTLC_COMMITSIZE, FALSE, L"Shared commit", 70, PH_ALIGN_RIGHT, ULONG_MAX, DT_RIGHT, TRUE);
+    PhAddTreeNewColumnEx(hwnd, PHPRTLC_PRIORITYBOOST, FALSE, L"Priority boost", 45, PH_ALIGN_LEFT, ULONG_MAX, 0, TRUE);
 
     TreeNew_SetRedraw(hwnd, TRUE);
 
@@ -605,6 +607,7 @@ VOID PhpRemoveProcessNode(
     PhClearReference(&ProcessNode->ImageCoherencyStatusText);
     PhClearReference(&ProcessNode->CodePageText);
     PhClearReference(&ProcessNode->ParentPidText);
+    PhClearReference(&ProcessNode->ParentConsolePidText);
     PhClearReference(&ProcessNode->SharedCommitText);
 
     PhDeleteGraphBuffers(&ProcessNode->CpuGraphBuffers);
@@ -1462,6 +1465,28 @@ static VOID PhpUpdateProcessNodePowerThrottling(
     }
 }
 
+static VOID PhpUpdateProcessNodePriorityBoost(
+    _Inout_ PPH_PROCESS_NODE ProcessNode
+    )
+{
+    if (!(ProcessNode->ValidMask & PHPN_PRIORITYBOOST))
+    {
+        ProcessNode->PriorityBoost = FALSE;
+
+        if (ProcessNode->ProcessItem->QueryHandle)
+        {
+            BOOLEAN priorityBoost;
+
+            if (NT_SUCCESS(PhGetProcessPriorityBoost(ProcessNode->ProcessItem->QueryHandle, &priorityBoost)))
+            {
+                ProcessNode->PriorityBoost = priorityBoost; 
+            }
+        }
+
+        ProcessNode->ValidMask |= PHPN_PRIORITYBOOST;
+    }
+}
+
 #define SORT_FUNCTION(Column) PhpProcessTreeNewCompare##Column
 
 #define BEGIN_SORT_FUNCTION(Column) static int __cdecl PhpProcessTreeNewCompare##Column( \
@@ -2184,9 +2209,21 @@ BEGIN_SORT_FUNCTION(ParentPid)
 }
 END_SORT_FUNCTION
 
+BEGIN_SORT_FUNCTION(ParentConsolePid)
+{
+    sortResult = intptrcmp((LONG_PTR)processItem1->ConsoleHostProcessId, (LONG_PTR)processItem2->ConsoleHostProcessId);
+}
+END_SORT_FUNCTION
+
 BEGIN_SORT_FUNCTION(SharedCommit)
 {
     sortResult = uint64cmp(processItem1->SharedCommitCharge, processItem2->SharedCommitCharge);
+}
+END_SORT_FUNCTION
+
+BEGIN_SORT_FUNCTION(PriorityBoost)
+{
+    sortResult = ucharcmp(node1->PriorityBoost, node2->PriorityBoost);
 }
 END_SORT_FUNCTION
 
@@ -2324,7 +2361,9 @@ BOOLEAN NTAPI PhpProcessTreeNewCallback(
                         SORT_FUNCTION(PowerThrottling),
                         SORT_FUNCTION(Architecture),
                         SORT_FUNCTION(ParentPid),
+                        SORT_FUNCTION(ParentConsolePid),
                         SORT_FUNCTION(SharedCommit),
+                        SORT_FUNCTION(PriorityBoost),
                     };
                     int (__cdecl *sortFunction)(const void *, const void *);
 
@@ -3341,6 +3380,7 @@ BOOLEAN NTAPI PhpProcessTreeNewCallback(
                     }
                     break;
                 }
+                break;
             case PHPRTLC_PARENTPID:
                 {
                     if (PH_IS_REAL_PROCESS_ID(processItem->ProcessId))
@@ -3354,6 +3394,16 @@ BOOLEAN NTAPI PhpProcessTreeNewCallback(
                     }
                 }
                 break;
+            case PHPRTLC_PARENTCONSOLEPID:
+                {
+                    PH_FORMAT format;
+
+                    PhInitFormatU(&format, HandleToUlong((HANDLE)((ULONG_PTR)processItem->ConsoleHostProcessId & ~3)));
+
+                    PhMoveReference(&node->ParentConsolePidText, PhFormat(&format, 1, 0));
+                    getCellText->Text = node->ParentConsolePidText->sr;
+                }
+                break;
             case PHPRTLC_COMMITSIZE:
                 {
                     if (processItem->SharedCommitCharge != 0)
@@ -3361,6 +3411,14 @@ BOOLEAN NTAPI PhpProcessTreeNewCallback(
                         PhMoveReference(&node->SharedCommitText, PhFormatSize(processItem->SharedCommitCharge, ULONG_MAX));
                         getCellText->Text = node->SharedCommitText->sr;
                     }
+                }
+                break;
+            case PHPRTLC_PRIORITYBOOST:
+                {
+                    PhpUpdateProcessNodePriorityBoost(node);
+
+                    if (node->PriorityBoost)
+                        PhInitializeStringRef(&getCellText->Text, L"Yes");
                 }
                 break;
             default:
@@ -4494,7 +4552,7 @@ PPH_LIST PhGetProcessTreeListLines(
     ULONG i;
     ULONG j;
 
-    // Use a local auto-pool to make memory mangement a bit less painful.
+    // Use a local auto-pool to make memory management a bit less painful.
     PhInitializeAutoPool(&autoPool);
 
     rows = NumberOfNodes + 1;
