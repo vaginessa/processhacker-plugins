@@ -406,6 +406,10 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                     ADD_VALUE(L"Guard EH Continuation table", PhaFormatString(L"0x%Ix", (Config)->GuardEHContinuationTable)->Buffer); \
                     ADD_VALUE(L"Guard EH Continuation table entry count", PhaFormatUInt64((Config)->GuardEHContinuationCount, TRUE)->Buffer); \
                 } \
+            }
+
+            #define ADD_VALUES2(Type, Config) \
+            { \
                 if (RTL_CONTAINS_FIELD((Config), (Config)->Size, GuardXFGCheckFunctionPointer)) \
                 { \
                     ADD_VALUE(L"XFG check-function pointer", PhaFormatString(L"0x%Ix", (Config)->GuardXFGCheckFunctionPointer)->Buffer); \
@@ -423,6 +427,9 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                 if (NT_SUCCESS(PhGetMappedImageLoadConfig32(&PvMappedImage, &config32)))
                 {
                     ADD_VALUES(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
+                #if defined(NTDDI_WIN10_CO) && (NTDDI_VERSION >= NTDDI_WIN10_CO)
+                    ADD_VALUES2(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
+                #endif
                     PvpAddPeEnclaveConfig(config32, context->ListViewHandle);
                 }
             }
@@ -431,6 +438,9 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                 if (NT_SUCCESS(PhGetMappedImageLoadConfig64(&PvMappedImage, &config64)))
                 {
                     ADD_VALUES(IMAGE_LOAD_CONFIG_DIRECTORY64, config64);
+                #if defined(NTDDI_WIN10_CO) && (NTDDI_VERSION >= NTDDI_WIN10_CO)
+                    ADD_VALUES2(IMAGE_LOAD_CONFIG_DIRECTORY32, config64);
+                #endif
                     PvpAddPeEnclaveConfig(config64, context->ListViewHandle);
                 }
             }

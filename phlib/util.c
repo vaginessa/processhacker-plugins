@@ -424,13 +424,11 @@ PPH_STRING PhGetMessage(
         return NULL;
 
     if (messageEntry->Flags & MESSAGE_RESOURCE_UNICODE)
-    {
         return PhCreateStringEx((PWCHAR)messageEntry->Text, messageEntry->Length);
-    }
+    else if (messageEntry->Flags & MESSAGE_RESOURCE_UTF8)
+        return PhConvertUtf8ToUtf16Ex((PCHAR)messageEntry->Text, messageEntry->Length);
     else
-    {
         return PhConvertMultiByteToUtf16Ex((PCHAR)messageEntry->Text, messageEntry->Length);
-    }
 }
 
 /**
@@ -602,6 +600,10 @@ PPH_STRING PhGetStatusMessage(
         {
             Win32Result = WIN32_FROM_NTSTATUS(Status);
         }
+        else if (NT_FACILITY(Status) == FACILTIY_MUI_ERROR_CODE)
+        {
+            Win32Result = Status; // needed by PhGetLastWin32ErrorAsNtStatus(CERT_E_REVOKED) (dmex)
+        }
     }
 
     if (!Win32Result)
@@ -644,7 +646,7 @@ VOID PhShowStatus(
     {
         if (Message)
         {
-            PhShowError(hWnd, L"%s.", Message);
+            PhShowError(hWnd, L"%s", Message);
         }
         else
         {
@@ -1820,7 +1822,7 @@ PVOID PhGetFileVersionInfoValue(
 _Success_(return)
 BOOLEAN PhGetFileVersionInfoKey(
     _In_ PVS_VERSION_INFO_STRUCT32 VersionInfo,
-    _In_ ULONG KeyLength,
+    _In_ SIZE_T KeyLength,
     _In_ PWSTR Key,
     _Out_opt_ PVOID* Buffer
     )
@@ -1835,7 +1837,7 @@ BOOLEAN PhGetFileVersionInfoKey(
     valueOffset = VersionInfo->ValueLength * (VersionInfo->Type ? sizeof(WCHAR) : sizeof(BYTE));
     child = PTR_ADD_OFFSET(value, ALIGN_UP(valueOffset, ULONG));
 
-    while ((ULONG_PTR)child < (ULONG_PTR)VersionInfo + VersionInfo->Length)
+    while ((ULONG_PTR)child < (ULONG_PTR)PTR_ADD_OFFSET(VersionInfo, VersionInfo->Length))
     {
         if (_wcsnicmp(child->Key, Key, KeyLength) == 0 && child->Key[KeyLength] == UNICODE_NULL)
         {
@@ -1868,14 +1870,14 @@ BOOLEAN PhGetFileVersionVarFileInfoValue(
 
     if (PhGetFileVersionInfoKey(
         VersionInfo,
-        (ULONG)varfileBlockName.Length / sizeof(WCHAR),
+        varfileBlockName.Length / sizeof(WCHAR),
         varfileBlockName.Buffer,
         &varfileBlockInfo
         ))
     {
         if (PhGetFileVersionInfoKey(
             varfileBlockInfo,
-            (ULONG)KeyName->Length / sizeof(WCHAR),
+            KeyName->Length / sizeof(WCHAR),
             KeyName->Buffer,
             &varfileBlockValue
             ))
@@ -2000,7 +2002,7 @@ PPH_STRING PhGetFileVersionInfoString2(
 
     if (!PhGetFileVersionInfoKey(
         VersionInfo,
-        (ULONG)blockInfoName.Length / sizeof(WCHAR),
+        blockInfoName.Length / sizeof(WCHAR),
         blockInfoName.Buffer,
         &blockStringInfo
         ))
@@ -2017,7 +2019,7 @@ PPH_STRING PhGetFileVersionInfoString2(
 
     if (!PhGetFileVersionInfoKey(
         blockStringInfo,
-        (ULONG)returnLength / sizeof(WCHAR) - sizeof(ANSI_NULL), // ANSI_NULL required (dmex)
+        returnLength / sizeof(WCHAR) - sizeof(ANSI_NULL), // ANSI_NULL required (dmex)
         langNameString,
         &blockLangInfo
         ))
@@ -2027,7 +2029,7 @@ PPH_STRING PhGetFileVersionInfoString2(
 
     if (!PhGetFileVersionInfoKey(
         blockLangInfo,
-        (ULONG)KeyName->Length / sizeof(WCHAR),
+        KeyName->Length / sizeof(WCHAR),
         KeyName->Buffer,
         &stringNameBlockInfo
         ))
@@ -2041,7 +2043,7 @@ PPH_STRING PhGetFileVersionInfoString2(
         return NULL;
 
     string = PhCreateStringEx(
-        (PWCHAR)stringNameBlockValue,
+        stringNameBlockValue,
         stringNameBlockInfo->ValueLength * sizeof(WCHAR)
         );
     PhTrimToNullTerminatorString(string); // length may include the null terminator.

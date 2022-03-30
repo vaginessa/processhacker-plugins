@@ -309,10 +309,11 @@ BOOLEAN PhDescribeProcessMitigationPolicy(
                     PhInitializeStringBuilder(&sb, 50);
                     if (data->StrictMode) PhAppendStringBuilder2(&sb, L"Strict ");
 
-                    if (data->EnableXfg)
-                        PhAppendStringBuilder2(&sb, L"XF Guard");
-                    else
-                        PhAppendStringBuilder2(&sb, L"CF Guard");
+                #if !defined(NTDDI_WIN10_CO) || (NTDDI_VERSION < NTDDI_WIN10_CO)
+                    PhAppendStringBuilder2(&sb, _bittest((const PLONG)&data->Flags, 3) ? L"XF Guard" : L"CF Guard");
+                #else
+                    PhAppendStringBuilder2(&sb, data->EnableXfg ? L"XF Guard" : L"CF Guard");
+                #endif
 
                     *ShortDescription = PhFinalStringBuilderString(&sb);
                 }
@@ -321,7 +322,11 @@ BOOLEAN PhDescribeProcessMitigationPolicy(
                 {
                     PhInitializeStringBuilder(&sb, 100);
 
+                #if !defined(NTDDI_WIN10_CO) || (NTDDI_VERSION < NTDDI_WIN10_CO)
+                    if (_bittest((const PLONG)&data->Flags, 3))
+                #else
                     if (data->EnableXfg)
+                #endif
                     {
                         PhAppendStringBuilder2(&sb, L"Extended Control Flow Guard (XFG) is enabled for the process.\r\n");
 
