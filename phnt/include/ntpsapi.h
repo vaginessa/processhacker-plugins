@@ -244,7 +244,7 @@ typedef enum _THREADINFOCLASS
     ThreadBasicInformation, // q: THREAD_BASIC_INFORMATION
     ThreadTimes, // q: KERNEL_USER_TIMES
     ThreadPriority, // s: KPRIORITY (requires SeIncreaseBasePriorityPrivilege)
-    ThreadBasePriority, // s: LONG
+    ThreadBasePriority, // s: KPRIORITY
     ThreadAffinityMask, // s: KAFFINITY
     ThreadImpersonationToken, // s: HANDLE
     ThreadDescriptorTableEntry, // q: DESCRIPTOR_TABLE_ENTRY (or WOW64_DESCRIPTOR_TABLE_ENTRY)
@@ -274,7 +274,7 @@ typedef enum _THREADINFOCLASS
     ThreadGroupInformation, // q: GROUP_AFFINITY // 30
     ThreadUmsInformation, // q: THREAD_UMS_INFORMATION
     ThreadCounterProfiling, // q: BOOLEAN; s: THREAD_PROFILING_INFORMATION?
-    ThreadIdealProcessorEx, // q: PROCESSOR_NUMBER
+    ThreadIdealProcessorEx, // qs: PROCESSOR_NUMBER; s: previous PROCESSOR_NUMBER on return
     ThreadCpuAccountingInformation, // q: BOOLEAN; s: HANDLE (NtOpenSession) // NtCurrentThread // since WIN8
     ThreadSuspendCount, // q: ULONG // since WINBLUE
     ThreadHeterogeneousCpuPolicy, // q: KHETERO_CPU_POLICY // since THRESHOLD
@@ -1025,7 +1025,7 @@ typedef struct _THREAD_BASIC_INFORMATION
     CLIENT_ID ClientId;
     KAFFINITY AffinityMask;
     KPRIORITY Priority;
-    LONG BasePriority;
+    KPRIORITY BasePriority;
 } THREAD_BASIC_INFORMATION, *PTHREAD_BASIC_INFORMATION;
 
 // private

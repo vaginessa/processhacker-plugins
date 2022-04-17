@@ -593,14 +593,14 @@ FORCEINLINE
 NTSTATUS
 PhSetProcessAffinityMask(
     _In_ HANDLE ProcessHandle,
-    _In_ ULONG_PTR AffinityMask
+    _In_ KAFFINITY AffinityMask
     )
 {
     return NtSetInformationProcess(
         ProcessHandle,
         ProcessAffinityMask,
         &AffinityMask,
-        sizeof(ULONG_PTR)
+        sizeof(KAFFINITY)
         );
 }
 
@@ -831,7 +831,7 @@ FORCEINLINE
 NTSTATUS
 PhGetThreadBasePriority(
     _In_ HANDLE ThreadHandle,
-    _Out_ PLONG Increment
+    _Out_ PKPRIORITY Increment
     )
 {
     NTSTATUS status;
@@ -875,14 +875,14 @@ FORCEINLINE
 NTSTATUS
 PhSetThreadBasePriority(
     _In_ HANDLE ThreadHandle,
-    _In_ LONG Increment
+    _In_ KPRIORITY Increment
     )
 {
     return NtSetInformationThread(
         ThreadHandle,
         ThreadBasePriority,
         &Increment,
-        sizeof(LONG)
+        sizeof(KPRIORITY)
         );
 }
 
@@ -1079,6 +1079,31 @@ PhGetThreadIdealProcessor(
 
 FORCEINLINE
 NTSTATUS
+PhSetThreadIdealProcessor(
+    _In_ HANDLE ThreadHandle,
+    _In_ PPROCESSOR_NUMBER ProcessorNumber,
+    _Out_opt_ PPROCESSOR_NUMBER PreviousIdealProcessor
+    )
+{
+    NTSTATUS status;
+    PROCESSOR_NUMBER processorNumber;
+
+    processorNumber = *ProcessorNumber;
+    status = NtSetInformationThread(
+        ThreadHandle,
+        ThreadIdealProcessorEx,
+        &processorNumber,
+        sizeof(PROCESSOR_NUMBER)
+        );
+
+    if (PreviousIdealProcessor)
+        *PreviousIdealProcessor = processorNumber;
+
+    return status;
+}
+
+FORCEINLINE
+NTSTATUS
 PhGetThreadSuspendCount(
     _In_ HANDLE ThreadHandle,
     _Out_ PULONG SuspendCount
@@ -1256,14 +1281,45 @@ FORCEINLINE
 NTSTATUS
 PhSetThreadAffinityMask(
     _In_ HANDLE ThreadHandle,
-    _In_ ULONG_PTR AffinityMask
+    _In_ KAFFINITY AffinityMask
     )
 {
     return NtSetInformationThread(
         ThreadHandle,
         ThreadAffinityMask,
         &AffinityMask,
-        sizeof(ULONG_PTR)
+        sizeof(KAFFINITY)
+        );
+}
+
+FORCEINLINE
+NTSTATUS
+PhGetThreadGroupAffinity(
+    _In_ HANDLE ThreadHandle,
+    _Out_ PGROUP_AFFINITY GroupAffinity
+    )
+{
+    return NtQueryInformationThread(
+        ThreadHandle,
+        ThreadGroupInformation,
+        GroupAffinity,
+        sizeof(GROUP_AFFINITY),
+        NULL
+        );
+}
+
+FORCEINLINE
+NTSTATUS
+PhSetThreadGroupAffinity(
+    _In_ HANDLE ThreadHandle,
+    _In_ GROUP_AFFINITY GroupAffinity
+    )
+{
+    return NtSetInformationThread(
+        ThreadHandle,
+        ThreadGroupInformation,
+        &GroupAffinity,
+        sizeof(GROUP_AFFINITY)
         );
 }
 
