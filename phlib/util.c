@@ -24,6 +24,8 @@
 #include <ph.h>
 
 #include <commdlg.h>
+#include <processsnapshot.h>
+#include <sddl.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <winsta.h>
@@ -3903,6 +3905,101 @@ NTSTATUS PhFilterTokenForLimitedUser(
     *NewTokenHandle = newTokenHandle;
 
     return STATUS_SUCCESS;
+}
+
+PPH_STRING PhGetSecurityDescriptorAsString(
+    _In_ SECURITY_INFORMATION SecurityInformation,
+    _In_ PSECURITY_DESCRIPTOR SecurityDescriptor
+    )
+{
+    PPH_STRING securityDescriptorString = NULL;
+    ULONG stringSecurityDescriptorLength = 0;
+    PWSTR stringSecurityDescriptor = NULL;
+
+    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW_Import())
+        return NULL;
+
+    if (ConvertSecurityDescriptorToStringSecurityDescriptorW_Import()(
+        SecurityDescriptor,
+        SDDL_REVISION,
+        SecurityInformation,
+        &stringSecurityDescriptor,
+        &stringSecurityDescriptorLength
+        ))
+    {
+        securityDescriptorString = PhCreateStringEx(
+            stringSecurityDescriptor,
+            stringSecurityDescriptorLength * sizeof(WCHAR)
+            );
+        LocalFree(stringSecurityDescriptor);
+    }
+
+    return securityDescriptorString;
+}
+
+PSECURITY_DESCRIPTOR PhGetSecurityDescriptorFromString(
+    _In_ PWSTR SecurityDescriptorString
+    )
+{
+    PVOID securityDescriptor = NULL;
+    ULONG securityDescriptorLength = 0;
+    PSECURITY_DESCRIPTOR securityDescriptorBuffer = NULL;
+
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW_Import())
+        return NULL;
+
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW_Import()(
+        SecurityDescriptorString,
+        SDDL_REVISION,
+        &securityDescriptorBuffer,
+        &securityDescriptorLength
+        ))
+    {
+        //assert(securityDescriptorLength == RtlLengthSecurityDescriptor(securityDescriptor));
+        securityDescriptor = PhAllocateCopy(
+            securityDescriptorBuffer,
+            securityDescriptorLength
+            );
+        LocalFree(securityDescriptorBuffer);
+    }
+
+    return securityDescriptor;
+}
+
+_Success_(return)
+BOOLEAN PhGetObjectSecurityDescriptorAsString(
+    _In_ HANDLE Handle,
+    _Out_ PPH_STRING* SecurityDescriptorString
+    )
+{
+    PSECURITY_DESCRIPTOR securityDescriptor;
+    PPH_STRING securityDescriptorString;
+
+    if (NT_SUCCESS(PhGetObjectSecurity(
+        Handle,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+        DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION |
+        ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION,
+        &securityDescriptor
+        )))
+    {
+        if (securityDescriptorString = PhGetSecurityDescriptorAsString(
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+            DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION |
+            ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION,
+            securityDescriptor
+            ))
+        {
+            *SecurityDescriptorString = securityDescriptorString;
+
+            PhFree(securityDescriptor);
+            return TRUE;
+        }
+
+        PhFree(securityDescriptor);
+    }
+
+    return FALSE;
 }
 
 /**
@@ -8048,6 +8145,177 @@ NTSTATUS PhFreeLibraryAsImageResource(
     return NtUnmapViewOfSection(NtCurrentProcess(), LDR_IMAGEMAPPING_TO_MAPPEDVIEW(BaseAddress));
 }
 
+#if (PHNT_VERSION >= PHNT_REDSTONE5)
+// This function creates a ring buffer by allocating a pagefile-backed section
+// and mapping two views of that section next to each other. This way if the
+// last record in the buffer wraps it can still be accessed in a linear fashion
+// using its base VA. (Win10 RS5 and above only) (dmex)
+// Based on Win32 version: https://docs.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc2#examples
+NTSTATUS PhCreateRingBuffer(
+    _In_ SIZE_T BufferSize,
+    _Out_ PVOID* RingBuffer,
+    _Out_ PVOID* SecondaryView
+    )
+{
+    NTSTATUS status;
+    SIZE_T regionSize;
+    LARGE_INTEGER sectionSize;
+    HANDLE sectionHandle = NULL;
+    PVOID placeholder1 = NULL;
+    PVOID placeholder2 = NULL;
+    PVOID sectionView1 = NULL;
+    PVOID sectionView2 = NULL;
+
+    if ((BufferSize % PhSystemBasicInformation.AllocationGranularity) != 0)
+        return STATUS_UNSUCCESSFUL;
+
+    //
+    // Reserve a placeholder region where the buffer will be mapped.
+    //
+
+    regionSize = 2 * BufferSize;
+    status = NtAllocateVirtualMemoryEx(
+        NtCurrentProcess(),
+        &placeholder1,
+        &regionSize,
+        MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+        PAGE_NOACCESS,
+        NULL,
+        0
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    //
+    // Split the placeholder region into two regions of equal size.
+    //
+
+    regionSize = BufferSize;
+    status = NtFreeVirtualMemory(
+        NtCurrentProcess(),
+        &placeholder1,
+        &regionSize,
+        MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    placeholder2 = PTR_ADD_OFFSET(placeholder1, BufferSize);
+
+    //
+    // Create a pagefile-backed section for the buffer.
+    //
+
+    sectionSize.QuadPart = BufferSize;
+    status = NtCreateSectionEx(
+        &sectionHandle,
+        SECTION_ALL_ACCESS,
+        NULL,
+        &sectionSize,
+        PAGE_READWRITE,
+        SEC_COMMIT,
+        NULL,
+        NULL,
+        0
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    //
+    // Map the section into the first placeholder region.
+    //
+
+    regionSize = BufferSize;
+    sectionView1 = placeholder1;
+    status = NtMapViewOfSectionEx(
+        sectionHandle,
+        NtCurrentProcess(),
+        &sectionView1,
+        0,
+        &regionSize,
+        MEM_REPLACE_PLACEHOLDER,
+        PAGE_READWRITE,
+        NULL,
+        0
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    //
+    // Ownership transferred, don't free this now.
+    //
+
+    placeholder1 = NULL;
+
+    //
+    // Map the section into the second placeholder region.
+    //
+
+    regionSize = BufferSize;
+    sectionView2 = placeholder2;
+    status = NtMapViewOfSectionEx(
+        sectionHandle,
+        NtCurrentProcess(),
+        &sectionView2,
+        0,
+        &regionSize,
+        MEM_REPLACE_PLACEHOLDER,
+        PAGE_READWRITE,
+        NULL,
+        0
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    //
+    // Success, return both mapped views to the caller.
+    //
+
+    *RingBuffer = sectionView1; 
+    *SecondaryView = sectionView2;
+
+#ifdef DEBUG
+    // assert the buffer wraps properly.
+    ((PCHAR)sectionView1)[0] = 'a';
+    assert(((PCHAR)sectionView1)[BufferSize] == 'a');
+#endif
+
+    placeholder2 = NULL;
+    sectionView1 = NULL;
+    sectionView2 = NULL;
+
+CleanupExit:
+    if (sectionHandle)
+    {
+        NtClose(sectionHandle);
+    }
+
+    if (placeholder1)
+    {
+        regionSize = 0;
+        NtFreeVirtualMemory(NtCurrentProcess(), placeholder1, &regionSize, MEM_RELEASE);
+    }
+
+    if (placeholder2)
+    {
+        regionSize = 0;
+        NtFreeVirtualMemory(NtCurrentProcess(), placeholder2, &regionSize, MEM_RELEASE);
+    }
+
+    if (sectionView1)
+        NtUnmapViewOfSection(NtCurrentProcess(), sectionView1);
+    if (sectionView2)
+        NtUnmapViewOfSection(NtCurrentProcess(), sectionView2);
+
+    return status;
+}
+#endif
+
 NTSTATUS PhDelayExecutionEx(
     _In_ BOOLEAN Alertable,
     _In_opt_ PLARGE_INTEGER DelayInterval
@@ -8219,4 +8487,148 @@ PPH_STRING PhApiSetResolveToHost(
     }
 
     return NULL;
+}
+
+NTSTATUS PhCreateProcessClone(
+    _Out_ PHANDLE ProcessHandle,
+    _In_ HANDLE ProcessId
+    )
+{
+    NTSTATUS status;
+    HANDLE processHandle;
+    HANDLE cloneProcessHandle;
+
+    status = PhOpenProcess(
+        &processHandle,
+        PROCESS_CREATE_PROCESS,
+        ProcessId
+        );
+
+    if (!NT_SUCCESS(status))
+        return status;
+
+    status = NtCreateProcessEx(
+        &cloneProcessHandle,
+        PROCESS_ALL_ACCESS,
+        NULL,
+        processHandle,
+        PROCESS_CREATE_FLAGS_INHERIT_FROM_PARENT | PROCESS_CREATE_FLAGS_INHERIT_HANDLES | PROCESS_CREATE_FLAGS_SUSPENDED,
+        NULL,
+        NULL,
+        NULL,
+        0
+        );
+
+    NtClose(processHandle);
+
+    if (NT_SUCCESS(status))
+    {
+        *ProcessHandle = cloneProcessHandle;
+    }
+
+    return status;
+}
+
+NTSTATUS PhCreateProcessReflection(
+    _Out_ PHANDLE ProcessHandle,
+    _In_ HANDLE ProcessId
+    )
+{
+    NTSTATUS status;
+    HANDLE processHandle;
+    RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION reflectionInfo = { 0 };
+
+    status = PhOpenProcess(
+        &processHandle,
+        PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_DUP_HANDLE,
+        ProcessId
+        );
+
+    if (!NT_SUCCESS(status))
+        return status;
+
+    status = RtlCreateProcessReflection(
+        processHandle,
+        RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES,
+        NULL,
+        NULL,
+        NULL,
+        &reflectionInfo
+        );
+
+    NtClose(processHandle);
+
+    if (NT_SUCCESS(status))
+    {
+        *ProcessHandle = reflectionInfo.ReflectionProcessHandle;
+
+        NtClose(reflectionInfo.ReflectionThreadHandle);
+    }
+
+    return status;
+}
+
+NTSTATUS PhCreateProcessSnapshot(
+    _Out_ PHANDLE SnapshotHandle,
+    _In_ HANDLE ProcessId
+    )
+{
+    NTSTATUS status;
+    HANDLE processHandle;
+    HANDLE snapshotHandle;
+
+    if (!PssCaptureSnapshot_Import())
+        return STATUS_PROCEDURE_NOT_FOUND;
+
+    status = PhOpenProcess(
+        &processHandle,
+        MAXIMUM_ALLOWED,
+        ProcessId
+        );
+
+    if (!NT_SUCCESS(status))
+        return status;
+
+    status = PssCaptureSnapshot_Import()(
+        processHandle,
+        PSS_CAPTURE_VA_CLONE | PSS_CAPTURE_VA_SPACE | PSS_CAPTURE_VA_SPACE_SECTION_INFORMATION |
+        PSS_CAPTURE_HANDLE_TRACE | PSS_CAPTURE_HANDLES | PSS_CAPTURE_HANDLE_BASIC_INFORMATION |
+        PSS_CAPTURE_HANDLE_TYPE_SPECIFIC_INFORMATION | PSS_CAPTURE_HANDLE_NAME_INFORMATION |
+        PSS_CAPTURE_THREADS | PSS_CAPTURE_THREAD_CONTEXT | PSS_CREATE_USE_VM_ALLOCATIONS,
+        CONTEXT_ALL,
+        &snapshotHandle
+        );
+    status = PhDosErrorToNtStatus(status);
+
+    NtClose(processHandle);
+
+    if (NT_SUCCESS(status))
+    {
+        *SnapshotHandle = snapshotHandle;
+    }
+
+    return status;
+}
+
+VOID PhFreeProcessSnapshot(
+    _In_ PHANDLE ProcessHandle,
+    _In_ HANDLE SnapshotHandle
+    )
+{
+    PSS_VA_CLONE_INFORMATION processInfo;
+
+    if (PssQuerySnapshot_Import() && PssQuerySnapshot_Import()(
+        SnapshotHandle,
+        PSS_QUERY_VA_CLONE_INFORMATION,
+        &processInfo,
+        sizeof(PSS_VA_CLONE_INFORMATION)
+        ) == ERROR_SUCCESS)
+    {
+        NtClose(processInfo.VaCloneHandle);
+    }
+
+    if (PssFreeSnapshot_Import())
+    {
+        PssFreeSnapshot_Import()(ProcessHandle, SnapshotHandle);
+    }
 }

@@ -27,8 +27,6 @@
 #include <lsasup.h>
 #include <mapimg.h>
 
-#include <sddl.h>
-
 #define PH_DEVICE_PREFIX_LENGTH 64
 #define PH_DEVICE_MUP_PREFIX_MAX_COUNT 16
 
@@ -434,102 +432,6 @@ NTSTATUS PhSetObjectSecurity(
         );
 }
 
-PPH_STRING PhGetSecurityDescriptorAsString(
-    _In_ SECURITY_INFORMATION SecurityInformation,
-    _In_ PSECURITY_DESCRIPTOR SecurityDescriptor
-    )
-{
-    PPH_STRING securityDescriptorString = NULL;
-    ULONG stringSecurityDescriptorLength = 0;
-    PWSTR stringSecurityDescriptor = NULL;
-
-    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW_Import())
-        return NULL;
-
-    if (ConvertSecurityDescriptorToStringSecurityDescriptorW_Import()(
-        SecurityDescriptor,
-        SDDL_REVISION,
-        SecurityInformation,
-        &stringSecurityDescriptor,
-        &stringSecurityDescriptorLength
-        ))
-    {
-        securityDescriptorString = PhCreateStringEx(
-            stringSecurityDescriptor,
-            stringSecurityDescriptorLength * sizeof(WCHAR)
-            );
-        LocalFree(stringSecurityDescriptor);
-    }
-
-    return securityDescriptorString;
-}
-
-PSECURITY_DESCRIPTOR PhGetSecurityDescriptorFromString(
-    _In_ PWSTR SecurityDescriptorString
-    )
-{
-    PVOID securityDescriptor = NULL;
-    ULONG securityDescriptorLength = 0;
-    PSECURITY_DESCRIPTOR securityDescriptorBuffer = NULL;
-
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW_Import())
-        return NULL;
-
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW_Import()(
-        SecurityDescriptorString,
-        SDDL_REVISION,
-        &securityDescriptorBuffer,
-        &securityDescriptorLength
-        ))
-    {
-        //assert(securityDescriptorLength == RtlLengthSecurityDescriptor(securityDescriptor));
-        securityDescriptor = PhAllocateCopy(
-            securityDescriptorBuffer,
-            securityDescriptorLength
-            );
-        LocalFree(securityDescriptorBuffer);
-    }
-
-    return securityDescriptor;
-}
-
-_Success_(return)
-BOOLEAN PhGetObjectSecurityDescriptorAsString(
-    _In_ HANDLE Handle,
-    _Out_ PPH_STRING* SecurityDescriptorString
-    )
-{
-    PSECURITY_DESCRIPTOR securityDescriptor;
-    PPH_STRING securityDescriptorString;
-
-    if (NT_SUCCESS(PhGetObjectSecurity(
-        Handle,
-        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
-        DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION |
-        ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION,
-        &securityDescriptor
-        )))
-    {
-        if (securityDescriptorString = PhGetSecurityDescriptorAsString(
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
-            DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION |
-            ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION,
-            securityDescriptor
-            ))
-        {
-            *SecurityDescriptorString = securityDescriptorString;
-
-            PhFree(securityDescriptor);
-            return TRUE;
-        }
-
-        PhFree(securityDescriptor);
-    }
-
-    return FALSE;
-}
-
-
 /**
  * Terminates a process.
  *
@@ -804,14 +706,26 @@ NTSTATUS PhGetProcessIsBeingDebugged(
     _Out_ PBOOLEAN IsBeingDebugged
     )
 {
-    NTSTATUS status;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    BOOLEAN isBeingDebugged = FALSE;
+    PVOID debugHandle;
 
-    // NOTE: The ProcessDebugObjectHandle is always valid when the process is being debugged while the ProcessDebugPort 
-    // is only set when the process was created with DEBUG_PROCESS flag by CsrCreateProcess. (dmex)
-    if (KphIsVerified())
+    status = NtQueryInformationProcess(
+        ProcessHandle,
+        ProcessDebugPort,
+        &debugHandle,
+        sizeof(PVOID),
+        NULL
+        );
+
+    if (NT_SUCCESS(status))
     {
-        HANDLE debugHandle;
+        *IsBeingDebugged = !!debugHandle;
+        return status;
+    }
 
+    if (KphIsVerified()) // KphIsVerified required for STATUS_ACCESS_DENIED (dmex)
+    {
         status = NtQueryInformationProcess(
             ProcessHandle,
             ProcessDebugObjectHandle,
@@ -824,28 +738,12 @@ NTSTATUS PhGetProcessIsBeingDebugged(
         {
             *IsBeingDebugged = TRUE;
             NtClose(debugHandle);
+            return STATUS_SUCCESS;
         }
         else if (status == STATUS_ACCESS_DENIED)
         {
             *IsBeingDebugged = TRUE;
-            status = STATUS_SUCCESS;
-        }
-    }
-    else
-    {
-        PVOID debugPort;
-
-        status = NtQueryInformationProcess(
-            ProcessHandle,
-            ProcessDebugPort,
-            &debugPort,
-            sizeof(PVOID),
-            NULL
-            );
-
-        if (NT_SUCCESS(status))
-        {
-            *IsBeingDebugged = !!debugPort;
+            return STATUS_SUCCESS;
         }
     }
 
@@ -5722,7 +5620,8 @@ NTSTATUS PhEnumHandlesEx2(
     ULONG attempts = 0;
 
     bufferSize = 0x8000;
-    buffer = PhAllocateZero(bufferSize);
+    buffer = PhAllocate(bufferSize);
+    buffer->NumberOfHandles = 0;
 
     status = NtQueryInformationProcess(
         ProcessHandle,
@@ -5736,7 +5635,8 @@ NTSTATUS PhEnumHandlesEx2(
     {
         PhFree(buffer);
         bufferSize = returnLength;
-        buffer = PhAllocateZero(bufferSize);
+        buffer = PhAllocate(bufferSize);
+        buffer->NumberOfHandles = 0;
 
         status = NtQueryInformationProcess(
             ProcessHandle,
@@ -10318,38 +10218,9 @@ NTSTATUS PhQueryProcessHeapInformation(
     )
 {
     NTSTATUS status;
-    HANDLE processHandle = NULL;
-    HANDLE clientProcessId = ProcessId;
-    RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION reflectionInfo = { 0 };
     PRTL_DEBUG_INFORMATION debugBuffer = NULL;
     PPH_PROCESS_DEBUG_HEAP_INFORMATION heapDebugInfo = NULL;
     ULONG heapEntrySize;
-
-    status = PhOpenProcess(
-        &processHandle,
-        PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_DUP_HANDLE,
-        ProcessId
-        );
-
-    if (NT_SUCCESS(status))
-    {
-        // NOTE: RtlQueryProcessDebugInformation injects a thread into the process causing deadlocks and other issues in rare cases.
-        // We mitigate these problems by reflecting the process and querying heap information from the clone. (dmex)
-
-        status = RtlCreateProcessReflection(
-            processHandle,
-            0,
-            NULL,
-            NULL,
-            NULL,
-            &reflectionInfo
-            );
-
-        if (NT_SUCCESS(status))
-        {
-            clientProcessId = reflectionInfo.ReflectionClientId.UniqueProcess;
-        }
-    }
 
     for (ULONG i = 0x400000; ; i *= 2) // rev from Heap32First/Heap32Next (dmex)
     {
@@ -10357,7 +10228,7 @@ NTSTATUS PhQueryProcessHeapInformation(
             return STATUS_UNSUCCESSFUL;
 
         status = RtlQueryProcessDebugInformation(
-            clientProcessId,
+            ProcessId,
             RTL_QUERY_PROCESS_HEAP_SUMMARY | RTL_QUERY_PROCESS_HEAP_ENTRIES,
             debugBuffer
             );
@@ -10377,17 +10248,6 @@ NTSTATUS PhQueryProcessHeapInformation(
             break;
         }
     }
-
-    if (reflectionInfo.ReflectionProcessHandle)
-    {
-        PhTerminateProcess(reflectionInfo.ReflectionProcessHandle, STATUS_SUCCESS);
-        NtClose(reflectionInfo.ReflectionProcessHandle);
-    }
-
-    if (reflectionInfo.ReflectionThreadHandle)
-        NtClose(reflectionInfo.ReflectionThreadHandle);
-    if (processHandle)
-        NtClose(processHandle);
 
     if (!NT_SUCCESS(status))
         return status;
@@ -10414,6 +10274,7 @@ NTSTATUS PhQueryProcessHeapInformation(
     for (ULONG i = 0; i < heapDebugInfo->NumberOfHeaps; i++)
     {
         PRTL_HEAP_INFORMATION heapInfo = PTR_ADD_OFFSET(debugBuffer->Heaps->Heaps, heapEntrySize * i);
+        HANDLE processHandle;
         SIZE_T allocated = 0;
         SIZE_T committed = 0;
 

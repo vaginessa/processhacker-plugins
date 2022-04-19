@@ -24,6 +24,7 @@
 #include <phapp.h>
 #include <memprv.h>
 #include <heapstruct.h>
+#include <settings.h>
 
 #define MAX_HEAPS 1000
 #define WS_REQUEST_COUNT (PAGE_SIZE / sizeof(MEMORY_WORKING_SET_EX_INFORMATION))
@@ -261,21 +262,21 @@ VOID PhpUpdateHeapRegions(
         if (WindowsVersion >= WINDOWS_10)
             PhCreateExecutionRequiredRequest(processHandle, &powerRequestHandle);
 
-        // NOTE: RtlQueryProcessDebugInformation injects a thread into the process causing deadlocks and other issues in rare cases.
-        // We mitigate these problems by reflecting the process and querying heap information from the clone. (dmex)
-
-        status = RtlCreateProcessReflection(
-            processHandle,
-            0,
-            NULL,
-            NULL,
-            NULL,
-            &reflectionInfo
-            );
-
-        if (NT_SUCCESS(status))
+        if (PhGetIntegerSetting(L"EnableHeapReflection"))
         {
-            clientProcessId = reflectionInfo.ReflectionClientId.UniqueProcess;
+            status = RtlCreateProcessReflection(
+                processHandle,
+                0,
+                NULL,
+                NULL,
+                NULL,
+                &reflectionInfo
+                );
+
+            if (NT_SUCCESS(status))
+            {
+                clientProcessId = reflectionInfo.ReflectionClientId.UniqueProcess;
+            }
         }
     }
 
@@ -428,15 +429,16 @@ NTSTATUS PhpUpdateMemoryRegionTypes(
         PVOID processHeapsPtr;
         PVOID *processHeaps;
         PVOID apiSetMap;
-        ULONG i;
 #ifdef _WIN64
         PVOID peb32;
         ULONG processHeapsPtr32;
         ULONG *processHeaps32;
         ULONG apiSetMap32;
 #endif
-
-        PhpUpdateHeapRegions(List);
+        if (PhGetIntegerSetting(L"EnableHeapMemoryTagging"))
+        {
+            PhpUpdateHeapRegions(List);
+        }
 
         if (NT_SUCCESS(PhGetProcessBasicInformation(ProcessHandle, &basicInfo)) && basicInfo.PebBaseAddress != 0)
         {
@@ -690,8 +692,8 @@ NTSTATUS PhpUpdateMemoryRegionTypes(
 
         if (cfgBitmapAddress && (cfgBitmapMemoryItem = PhLookupMemoryItemList(List, cfgBitmapAddress)))
         {
-            PLIST_ENTRY listEntry = &cfgBitmapMemoryItem->ListEntry;
-            PPH_MEMORY_ITEM memoryItem = CONTAINING_RECORD(listEntry, PH_MEMORY_ITEM, ListEntry);
+            listEntry = &cfgBitmapMemoryItem->ListEntry;
+            memoryItem = CONTAINING_RECORD(listEntry, PH_MEMORY_ITEM, ListEntry);
 
             while (memoryItem->AllocationBaseItem == cfgBitmapMemoryItem)
             {
@@ -708,8 +710,8 @@ NTSTATUS PhpUpdateMemoryRegionTypes(
         // Note: Wow64 processes on 64bit also have CfgBitmap regions.
         if (isWow64 && cfgBitmapWow64Address && (cfgBitmapMemoryItem = PhLookupMemoryItemList(List, cfgBitmapWow64Address)))
         {
-            PLIST_ENTRY listEntry = &cfgBitmapMemoryItem->ListEntry;
-            PPH_MEMORY_ITEM memoryItem = CONTAINING_RECORD(listEntry, PH_MEMORY_ITEM, ListEntry);
+            listEntry = &cfgBitmapMemoryItem->ListEntry;
+            memoryItem = CONTAINING_RECORD(listEntry, PH_MEMORY_ITEM, ListEntry);
 
             while (memoryItem->AllocationBaseItem == cfgBitmapMemoryItem)
             {
