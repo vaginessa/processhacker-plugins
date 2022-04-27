@@ -971,6 +971,24 @@ _Success_(return)
 PHLIBAPI
 BOOLEAN
 NTAPI
+PhGetProcessDpiAwareness(
+    _In_ HANDLE ProcessHandle,
+    _Out_ PULONG ProcessDpiAwareness
+    );
+
+_Success_(return)
+PHLIBAPI
+BOOLEAN
+NTAPI
+PhGetSendMessageReceiver(
+    _In_ HANDLE ThreadId,
+    _Out_ HWND *WindowHandle
+    );
+
+_Success_(return)
+PHLIBAPI
+BOOLEAN
+NTAPI
 PhExtractIcon(
     _In_ PWSTR FileName,
     _Out_opt_ HICON *IconLarge,

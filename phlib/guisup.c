@@ -1817,6 +1817,71 @@ BOOLEAN PhIsImmersiveProcess(
     return !!IsImmersiveProcess_I(ProcessHandle);
 }
 
+_Success_(return)
+BOOLEAN PhGetProcessDpiAwareness(
+    _In_ HANDLE ProcessHandle,
+    _Out_ PULONG ProcessDpiAwareness
+    )
+{
+    static PH_INITONCE initOnce = PH_INITONCE_INIT;
+    static BOOL (WINAPI *GetProcessDpiAwarenessInternal_I)(
+        _In_ HANDLE hprocess,
+        _Out_ ULONG *value
+        );
+    ULONG dpiAwareness = 0;
+
+    if (PhBeginInitOnce(&initOnce))
+    {
+        GetProcessDpiAwarenessInternal_I = PhGetDllProcedureAddress(L"user32.dll", "GetProcessDpiAwarenessInternal", 0);
+        PhEndInitOnce(&initOnce);
+    }
+
+    if (!GetProcessDpiAwarenessInternal_I)
+        return FALSE;
+
+    if (GetProcessDpiAwarenessInternal_I(ProcessHandle, &dpiAwareness))
+    {
+        *ProcessDpiAwareness = dpiAwareness;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+_Success_(return)
+BOOLEAN PhGetSendMessageReceiver(
+    _In_ HANDLE ThreadId,
+    _Out_ HWND *WindowHandle
+    )
+{
+    static PH_INITONCE initOnce = PH_INITONCE_INIT;
+    static HWND (WINAPI *GetSendMessageReceiver_I)(
+        _In_ HANDLE ThreadId
+        );
+    HWND windowHandle;
+
+    // GetSendMessageReceiver is an undocumented function exported by
+    // user32.dll. It retrieves the handle of the window which a thread
+    // is sending a message to. (wj32)
+
+    if (PhBeginInitOnce(&initOnce))
+    {
+        GetSendMessageReceiver_I = PhGetDllProcedureAddress(L"user32.dll", "GetSendMessageReceiver", 0);
+        PhEndInitOnce(&initOnce);
+    }
+
+    if (!GetSendMessageReceiver_I)
+        return FALSE;
+
+    if (windowHandle = GetSendMessageReceiver_I(ThreadId)) // && GetLastError() == ERROR_SUCCESS
+    {
+        *WindowHandle = windowHandle;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 // rev from ExtractIconExW
 _Success_(return)
 BOOLEAN PhExtractIcon(
