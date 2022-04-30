@@ -1338,10 +1338,10 @@ PPH_STRING PhFormatDate(
     PPH_STRING string;
     ULONG bufferSize;
 
-    bufferSize = GetDateFormat(LOCALE_USER_DEFAULT, 0, Date, Format, NULL, 0);
+    bufferSize = GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, Date, Format, NULL, 0, NULL);
     string = PhCreateStringEx(NULL, bufferSize * sizeof(WCHAR));
 
-    if (!GetDateFormat(LOCALE_USER_DEFAULT, 0, Date, Format, string->Buffer, bufferSize))
+    if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, Date, Format, string->Buffer, bufferSize, NULL))
     {
         PhDereferenceObject(string);
         return NULL;
@@ -1367,10 +1367,10 @@ PPH_STRING PhFormatTime(
     PPH_STRING string;
     ULONG bufferSize;
 
-    bufferSize = GetTimeFormat(LOCALE_USER_DEFAULT, 0, Time, Format, NULL, 0);
+    bufferSize = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, Time, Format, NULL, 0);
     string = PhCreateStringEx(NULL, bufferSize * sizeof(WCHAR));
 
-    if (!GetTimeFormat(LOCALE_USER_DEFAULT, 0, Time, Format, string->Buffer, bufferSize))
+    if (!GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, Time, Format, string->Buffer, bufferSize))
     {
         PhDereferenceObject(string);
         return NULL;
@@ -1397,12 +1397,12 @@ PPH_STRING PhFormatDateTime(
     ULONG dateBufferSize;
     ULONG count;
 
-    timeBufferSize = GetTimeFormat(LOCALE_USER_DEFAULT, 0, DateTime, NULL, NULL, 0);
-    dateBufferSize = GetDateFormat(LOCALE_USER_DEFAULT, 0, DateTime, NULL, NULL, 0);
+    timeBufferSize = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, DateTime, NULL, NULL, 0);
+    dateBufferSize = GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, DateTime, NULL, NULL, 0, NULL);
 
     string = PhCreateStringEx(NULL, ((SIZE_T)timeBufferSize + 1 + dateBufferSize) * sizeof(WCHAR));
 
-    if (!GetTimeFormat(LOCALE_USER_DEFAULT, 0, DateTime, NULL, &string->Buffer[0], timeBufferSize))
+    if (!GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, DateTime, NULL, &string->Buffer[0], timeBufferSize))
     {
         PhDereferenceObject(string);
         return NULL;
@@ -1411,7 +1411,7 @@ PPH_STRING PhFormatDateTime(
     count = (ULONG)PhCountStringZ(string->Buffer);
     string->Buffer[count] = L' ';
 
-    if (!GetDateFormat(LOCALE_USER_DEFAULT, 0, DateTime, NULL, &string->Buffer[count + 1], dateBufferSize))
+    if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, DateTime, NULL, &string->Buffer[count + 1], dateBufferSize, NULL))
     {
         PhDereferenceObject(string);
         return NULL;
@@ -4696,6 +4696,7 @@ static const PH_FLAG_MAPPING PhpFileDialogIfdMappings[] =
     { PH_FILEDIALOG_STRICTFILETYPES, FOS_STRICTFILETYPES },
     { PH_FILEDIALOG_PICKFOLDERS, FOS_PICKFOLDERS },
     { PH_FILEDIALOG_NOPATHVALIDATE, FOS_NOVALIDATE },
+    { PH_FILEDIALOG_DONTADDTORECENT, FOS_DONTADDTORECENT },
 };
 
 static const PH_FLAG_MAPPING PhpFileDialogOfnMappings[] =
@@ -4706,7 +4707,8 @@ static const PH_FLAG_MAPPING PhpFileDialogOfnMappings[] =
     { PH_FILEDIALOG_SHOWHIDDEN, OFN_FORCESHOWHIDDEN },
     { PH_FILEDIALOG_NODEREFERENCELINKS, OFN_NODEREFERENCELINKS },
     { PH_FILEDIALOG_OVERWRITEPROMPT, OFN_OVERWRITEPROMPT },
-    { PH_FILEDIALOG_NOPATHVALIDATE, OFN_NOVALIDATE }
+    { PH_FILEDIALOG_NOPATHVALIDATE, OFN_NOVALIDATE },
+    { PH_FILEDIALOG_DONTADDTORECENT, OFN_DONTADDTORECENT },
 };
 
 /**
