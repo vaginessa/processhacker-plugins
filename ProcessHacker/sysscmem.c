@@ -3,7 +3,7 @@
  *   System Information memory section
  *
  * Copyright (C) 2011-2016 wj32
- * Copyright (C) 2017-2020 dmex
+ * Copyright (C) 2017-2022 dmex
  *
  * This file is part of Process Hacker.
  *
@@ -300,6 +300,10 @@ VOID PhSipUninitializeMemoryDialog(
 {
     PhDeleteGraphState(&CommitGraphState);
     PhDeleteGraphState(&PhysicalGraphState);
+
+    // Note: Required for SysInfoViewChanging (dmex)
+    CommitGraphHandle = NULL;
+    PhysicalGraphHandle = NULL;
 }
 
 VOID PhSipTickMemoryDialog(
