@@ -702,7 +702,18 @@ NTSTATUS PhGetProcessImageFileNameWin32(
 
     if (NT_SUCCESS(status))
     {
-        *FileName = PhCreateStringFromUnicodeString(buffer);
+        PPH_STRING fileName;
+
+        // Note: ProcessImageFileNameWin32 returns the NT device path
+        // instead of the Win32 path in cases were the disk volume driver
+        // hasn't registerd with the volume manager and/or ignored the
+        // mount manager ioctls (e.g. ImDisk). We workaround this issue
+        // by calling PhGetFileName and resolving the NT device prefix. (dmex)
+
+        fileName = PhCreateStringFromUnicodeString(buffer);
+        PhMoveReference(&fileName, PhGetFileName(fileName));
+
+        *FileName = fileName;
     }
 
     PhFree(buffer);
@@ -10583,6 +10594,95 @@ CleanupExit:
     return status;
 }
 
+NTSTATUS PhGetProcessConsoleCodePage(
+    _In_ HANDLE ProcessHandle,
+    _In_ BOOLEAN ConsoleOutputCP,
+    _Out_ PUSHORT ConsoleCodePage
+    )
+{
+    NTSTATUS status;
+#ifdef _WIN64
+    BOOLEAN isWow64;
+#endif
+    USHORT codePage = 0;
+    THREAD_BASIC_INFORMATION basicInformation;
+    PPH_STRING kernel32FileName;
+    HANDLE threadHandle = NULL;
+    PVOID getConsoleCP = NULL;
+
+#ifdef _WIN64
+    if (!NT_SUCCESS(status = PhGetProcessIsWow64(ProcessHandle, &isWow64)))
+        return status;
+
+    if (isWow64)
+    {
+        PH_STRINGREF systemRootSr;
+
+        PhGetSystemRoot(&systemRootSr);
+        kernel32FileName = PhConcatStringRefZ(&systemRootSr, L"\\SysWow64\\kernel32.dll");
+    }
+    else
+    {
+#endif
+        PH_STRINGREF systemRootSr;
+
+        PhGetSystemRoot(&systemRootSr);
+        kernel32FileName = PhConcatStringRefZ(&systemRootSr, L"\\System32\\kernel32.dll");
+#ifdef _WIN64
+    }
+#endif
+
+    status = PhGetProcedureAddressRemote(
+        ProcessHandle,
+        kernel32FileName->Buffer,
+        ConsoleOutputCP ? "GetConsoleOutputCP" : "GetConsoleCP",
+        0,
+        &getConsoleCP,
+        NULL
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    status = RtlCreateUserThread(
+        ProcessHandle,
+        NULL,
+        FALSE,
+        0,
+        0,
+        0,
+        getConsoleCP,
+        NULL,
+        &threadHandle,
+        NULL
+        );
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    status = NtWaitForSingleObject(threadHandle, FALSE, PhTimeoutFromMillisecondsEx(1000));
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    status = PhGetThreadBasicInformation(threadHandle, &basicInformation);
+
+    if (!NT_SUCCESS(status))
+        goto CleanupExit;
+
+    *ConsoleCodePage = (USHORT)basicInformation.ExitStatus;
+
+CleanupExit:
+    if (threadHandle)
+    {
+        NtClose(threadHandle);
+    }
+
+    PhDereferenceObject(kernel32FileName);
+
+    return status;
+}
+
 NTSTATUS PhGetThreadLastStatusValue(
     _In_ HANDLE ThreadHandle,
     _In_opt_ HANDLE ProcessHandle,
@@ -11467,4 +11567,262 @@ BOOLEAN PhIsKnownDllFileName(
     }
 
     return FALSE;
+}
+
+NTSTATUS PhGetSystemLogicalProcessorInformation(
+    _In_ LOGICAL_PROCESSOR_RELATIONSHIP RelationshipType,
+    _Out_ PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *Buffer,
+    _Out_ PULONG BufferLength
+    )
+{
+    static ULONG initialBufferSize[] = { 0x200, 0x80, 0x100, 0x1000 };
+    NTSTATUS status;
+    ULONG classIndex;
+    PVOID buffer;
+    ULONG bufferSize;
+    ULONG attempts;
+
+    switch (RelationshipType)
+    {
+    case RelationProcessorCore:
+        classIndex = 0;
+        break;
+    case RelationProcessorPackage:
+        classIndex = 1;
+        break;
+    case RelationGroup:
+        classIndex = 2;
+        break;
+    case RelationAll:
+        classIndex = 3;
+        break;
+    default:
+        return STATUS_INVALID_INFO_CLASS;
+    }
+
+    bufferSize = initialBufferSize[classIndex];
+    buffer = PhAllocate(bufferSize);
+
+    status = NtQuerySystemInformationEx(
+        SystemLogicalProcessorAndGroupInformation,
+        &RelationshipType,
+        sizeof(LOGICAL_PROCESSOR_RELATIONSHIP),
+        buffer,
+        bufferSize,
+        &bufferSize
+        );
+    attempts = 0;
+
+    while (status == STATUS_INFO_LENGTH_MISMATCH && attempts < 8)
+    {
+        PhFree(buffer);
+        buffer = PhAllocate(bufferSize);
+
+        status = NtQuerySystemInformationEx(
+            SystemLogicalProcessorAndGroupInformation,
+            &RelationshipType,
+            sizeof(LOGICAL_PROCESSOR_RELATIONSHIP),
+            buffer,
+            bufferSize,
+            &bufferSize
+            );
+        attempts++;
+    }
+
+    if (!NT_SUCCESS(status))
+    {
+        PhFree(buffer);
+        return status;
+    }
+
+    if (bufferSize <= 0x100000) initialBufferSize[classIndex] = bufferSize;
+    *Buffer = buffer;
+    *BufferLength = bufferSize;
+
+    return status;
+}
+
+// based on GetActiveProcessorCount (dmex)
+USHORT PhGetActiveProcessorCount(
+    _In_ USHORT ProcessorGroup
+    )
+{
+    if (PhSystemProcessorInformation.ActiveProcessorCount)
+    {
+        USHORT numberOfProcessors = 0;
+
+        if (ProcessorGroup == ALL_PROCESSOR_GROUPS)
+        {
+            for (USHORT i = 0; i < PhSystemProcessorInformation.NumberOfProcessorGroups; i++)
+            {
+                numberOfProcessors += PhSystemProcessorInformation.ActiveProcessorCount[i];
+            }
+        }
+        else
+        {
+            if (ProcessorGroup < PhSystemProcessorInformation.NumberOfProcessorGroups)
+            {
+                numberOfProcessors = PhSystemProcessorInformation.ActiveProcessorCount[ProcessorGroup];
+            }
+        }
+
+        return numberOfProcessors;
+    }
+    else
+    {
+        return PhSystemProcessorInformation.NumberOfProcessors;
+    }
+}
+
+NTSTATUS PhGetProcessorNumberFromIndex(
+    _In_ ULONG ProcessorIndex,
+    _Out_ PPH_PROCESSOR_NUMBER ProcessorNumber
+    )
+{
+    USHORT processorIndex = 0;
+
+    for (USHORT processorGroup = 0; processorGroup < PhSystemProcessorInformation.NumberOfProcessorGroups; processorGroup++)
+    {
+        USHORT processorCount = PhGetActiveProcessorCount(processorGroup);
+
+        for (USHORT processorNumber = 0; processorNumber < processorCount; processorNumber++)
+        {
+            if (processorIndex++ == ProcessorIndex)
+            {
+                memset(ProcessorNumber, 0, sizeof(PH_PROCESSOR_NUMBER));
+                (*ProcessorNumber).Group = processorGroup;
+                (*ProcessorNumber).Number = processorNumber;
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
+    return STATUS_UNSUCCESSFUL;
+}
+
+NTSTATUS PhGetProcessorGroupActiveAffinityMask(
+    _In_ USHORT ProcessorGroup,
+    _Out_ PKAFFINITY ActiveProcessorMask
+    )
+{
+    NTSTATUS status;
+    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX processorInformation;
+    ULONG processorInformationLength;
+
+    status = PhGetSystemLogicalProcessorInformation(
+        RelationGroup,
+        &processorInformation,
+        &processorInformationLength
+        );
+
+    if (NT_SUCCESS(status))
+    {
+        if (ProcessorGroup < processorInformation->Group.ActiveGroupCount)
+        {
+            *ActiveProcessorMask = processorInformation->Group.GroupInfo[ProcessorGroup].ActiveProcessorMask;
+        }
+        else
+        {
+            status = STATUS_UNSUCCESSFUL;
+        }
+
+        PhFree(processorInformation);
+    }
+
+    return status;
+}
+
+// rev from GetNumaHighestNodeNumber (dmex)
+NTSTATUS PhGetNumaHighestNodeNumber(
+    _Out_ PUSHORT NodeNumber
+    )
+{
+    NTSTATUS status;
+    SYSTEM_NUMA_INFORMATION numaProcessorMap;
+
+    status = NtQuerySystemInformation(
+        SystemNumaProcessorMap,
+        &numaProcessorMap,
+        sizeof(SYSTEM_NUMA_INFORMATION),
+        NULL
+        );
+
+    if (NT_SUCCESS(status))
+    {
+        *NodeNumber = (USHORT)numaProcessorMap.HighestNodeNumber;
+    }
+
+    return status;
+}
+
+// rev from GetNumaProcessorNodeEx (dmex)
+BOOLEAN PhGetNumaProcessorNode(
+    _In_ PPH_PROCESSOR_NUMBER ProcessorNumber,
+    _Out_ PUSHORT NodeNumber
+    )
+{
+    NTSTATUS status;
+    SYSTEM_NUMA_INFORMATION numaProcessorMap;
+    USHORT processorNode = 0;
+
+    if (ProcessorNumber->Group >= 20 || ProcessorNumber->Number >= MAXIMUM_PROC_PER_GROUP)
+    {
+        *NodeNumber = USHRT_MAX;
+        return FALSE;
+    }
+
+    status = NtQuerySystemInformation(
+        SystemNumaProcessorMap,
+        &numaProcessorMap,
+        sizeof(SYSTEM_NUMA_INFORMATION),
+        NULL
+        );
+
+    if (!NT_SUCCESS(status))
+    {
+        *NodeNumber = USHRT_MAX;
+        return FALSE;
+    }
+
+    while (
+        numaProcessorMap.ActiveProcessorsGroupAffinity[processorNode].Group != ProcessorNumber->Group ||
+        (numaProcessorMap.ActiveProcessorsGroupAffinity[processorNode].Mask & ((KAFFINITY)1 << ProcessorNumber->Number)) == 0
+        )
+    {
+        if (++processorNode > numaProcessorMap.HighestNodeNumber)
+        {
+            *NodeNumber = USHRT_MAX;
+            return FALSE;
+        }
+    }
+
+    *NodeNumber = processorNode;
+    return TRUE;
+}
+
+// rev from GetNumaProximityNodeEx (dmex)
+NTSTATUS PhGetNumaProximityNode(
+    _In_ ULONG ProximityId,
+    _Out_ PUSHORT NodeNumber
+    )
+{
+    NTSTATUS status;
+    SYSTEM_NUMA_PROXIMITY_MAP numaProximityMap;
+
+    memset(&numaProximityMap, 0, sizeof(SYSTEM_NUMA_PROXIMITY_MAP));
+    numaProximityMap.NodeProximityId = ProximityId;
+
+    status = NtQuerySystemInformation(
+        SystemNumaProximityNodeInformation,
+        &numaProximityMap,
+        sizeof(SYSTEM_NUMA_PROXIMITY_MAP),
+        NULL
+        );
+
+    if (NT_SUCCESS(status))
+    {
+        *NodeNumber = numaProximityMap.NodeNumber;
+    }
+
+    return status;
 }
