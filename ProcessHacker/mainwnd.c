@@ -909,7 +909,7 @@ VOID PhMwpOnCommand(
             PVOID fileDialog = PhCreateOpenFileDialog();
 
             PhSetFileDialogFilter(fileDialog, filters, RTL_NUMBER_OF(filters));
-            PhSetFileDialogOptions(fileDialog, PH_FILEDIALOG_NOPATHVALIDATE);
+            PhSetFileDialogOptions(fileDialog, PH_FILEDIALOG_NOPATHVALIDATE | PH_FILEDIALOG_DONTADDTORECENT);
 
             if (PhShowFileDialog(WindowHandle, fileDialog))
             {
@@ -2017,15 +2017,6 @@ ULONG_PTR PhMwpOnUserMessage(
 
             function = (PVOID)LParam;
             function((PVOID)WParam);
-        }
-        break;
-    case WM_PH_CALLBACK:
-        {
-            PVOID (NTAPI *function)(PVOID);
-
-            function = (PVOID)LParam;
-
-            return (ULONG_PTR)function((PVOID)WParam);
         }
         break;
     }
@@ -3849,7 +3840,7 @@ PVOID PhPluginInvokeWindowCallback(
         break;
     case PH_MAINWINDOW_CALLBACK_TYPE_CREATE_TAB_PAGE:
         {
-            return (PVOID)SendMessage(PhMainWndHandle, WM_PH_CALLBACK, (WPARAM)lparam, (LPARAM)PhMwpCreatePage);
+            return NULL; //(PVOID)SendMessage(PhMainWndHandle, WM_PH_CALLBACK, (WPARAM)lparam, (LPARAM)PhMwpCreatePage);
         }
         break;
     case PH_MAINWINDOW_CALLBACK_TYPE_GET_UPDATE_AUTOMATICALLY:
@@ -3868,4 +3859,11 @@ PVOID PhPluginInvokeWindowCallback(
     }
 
     return NULL;
+}
+
+PVOID PhPluginCreateTabPage(
+    _In_ PVOID Page
+    )
+{
+    return PhMwpCreatePage(Page);
 }

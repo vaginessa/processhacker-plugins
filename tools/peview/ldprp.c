@@ -422,6 +422,14 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                 } \
             }
 
+            #define ADD_VALUES3(Type, Config) \
+            { \
+                if (RTL_CONTAINS_FIELD((Config), (Config)->Size, GuardMemcpyFunctionPointer)) \
+                { \
+                    ADD_VALUE(L"Guard memcpy function pointer", PhaFormatString(L"0x%Ix", (Config)->GuardMemcpyFunctionPointer)->Buffer); \
+                } \
+            }
+
             if (PvMappedImage.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
             {
                 if (NT_SUCCESS(PhGetMappedImageLoadConfig32(&PvMappedImage, &config32)))
@@ -429,6 +437,9 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                     ADD_VALUES(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
                 #if defined(NTDDI_WIN10_CO) && (NTDDI_VERSION >= NTDDI_WIN10_CO)
                     ADD_VALUES2(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
+                #endif
+                #if defined(NTDDI_WIN10_NI) && (NTDDI_VERSION >= NTDDI_WIN10_NI)
+                    ADD_VALUES3(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
                 #endif
                     PvpAddPeEnclaveConfig(config32, context->ListViewHandle);
                 }
@@ -440,6 +451,9 @@ INT_PTR CALLBACK PvPeLoadConfigDlgProc(
                     ADD_VALUES(IMAGE_LOAD_CONFIG_DIRECTORY64, config64);
                 #if defined(NTDDI_WIN10_CO) && (NTDDI_VERSION >= NTDDI_WIN10_CO)
                     ADD_VALUES2(IMAGE_LOAD_CONFIG_DIRECTORY32, config64);
+                #endif
+                #if defined(NTDDI_WIN10_NI) && (NTDDI_VERSION >= NTDDI_WIN10_NI)
+                    ADD_VALUES3(IMAGE_LOAD_CONFIG_DIRECTORY32, config32);
                 #endif
                     PvpAddPeEnclaveConfig(config64, context->ListViewHandle);
                 }
