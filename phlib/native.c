@@ -1617,29 +1617,64 @@ NTSTATUS PhGetProcessWorkingSetInformation(
     )
 {
     NTSTATUS status;
-    PVOID buffer;
+    PMEMORY_WORKING_SET_INFORMATION buffer;
     SIZE_T bufferSize;
+    ULONG attempts = 0;
 
     bufferSize = 0x8000;
     buffer = PhAllocate(bufferSize);
 
-    while ((status = NtQueryVirtualMemory(
+    status = NtQueryVirtualMemory(
         ProcessHandle,
         NULL,
         MemoryWorkingSetInformation,
         buffer,
         bufferSize,
         NULL
-        )) == STATUS_INFO_LENGTH_MISMATCH)
+        );
+
+    while (status == STATUS_INFO_LENGTH_MISMATCH && attempts < 8)
     {
+        bufferSize = UFIELD_OFFSET(MEMORY_WORKING_SET_INFORMATION, WorkingSetInfo[buffer->NumberOfEntries]);
         PhFree(buffer);
-        bufferSize *= 2;
-
-        // Fail if we're resizing the buffer to something very large.
-        if (bufferSize > PH_LARGE_BUFFER_SIZE)
-            return STATUS_INSUFFICIENT_RESOURCES;
-
         buffer = PhAllocate(bufferSize);
+
+        status = NtQueryVirtualMemory(
+            ProcessHandle,
+            NULL,
+            MemoryWorkingSetInformation,
+            buffer,
+            bufferSize,
+            NULL
+            );
+
+        attempts++;
+    }
+
+    if (!NT_SUCCESS(status))
+    {
+        // Fall back to using the previous code that we've used since Windows 7 (dmex)
+        bufferSize = 0x8000;
+        buffer = PhAllocate(bufferSize);
+
+        while ((status = NtQueryVirtualMemory(
+            ProcessHandle,
+            NULL,
+            MemoryWorkingSetInformation,
+            buffer,
+            bufferSize,
+            NULL
+            )) == STATUS_INFO_LENGTH_MISMATCH)
+        {
+            PhFree(buffer);
+            bufferSize *= 2;
+
+            // Fail if we're resizing the buffer to something very large.
+            if (bufferSize > PH_LARGE_BUFFER_SIZE)
+                return STATUS_INSUFFICIENT_RESOURCES;
+
+            buffer = PhAllocate(bufferSize);
+        }
     }
 
     if (!NT_SUCCESS(status))
@@ -10544,7 +10579,56 @@ NTSTATUS PhGetProcessCodePage(
 #ifdef _WIN64
     if (!NT_SUCCESS(status = PhGetProcessIsWow64(ProcessHandle, &isWow64)))
         return status;
+#endif
 
+    if (WindowsVersion >= WINDOWS_11)
+    {
+#ifdef _WIN64
+        if (isWow64)
+        {
+            PVOID peb32;
+
+            status = PhGetProcessPeb32(ProcessHandle, &peb32);
+
+            if (!NT_SUCCESS(status))
+                return status;
+
+            status = NtReadVirtualMemory(
+                ProcessHandle,
+                PTR_ADD_OFFSET(peb32, UFIELD_OFFSET(PEB, ActiveCodePage)),
+                &codePage,
+                sizeof(USHORT),
+                NULL
+                );
+        }
+        else
+#endif
+        {
+            PVOID peb;
+
+            status = PhGetProcessPeb(ProcessHandle, &peb);
+
+            if (!NT_SUCCESS(status))
+                return status;
+
+            status = NtReadVirtualMemory(
+                ProcessHandle,
+                PTR_ADD_OFFSET(peb, UFIELD_OFFSET(PEB, ActiveCodePage)),
+                &codePage,
+                sizeof(USHORT),
+                NULL
+                );
+        }
+
+        if (NT_SUCCESS(status))
+        {
+            *ProcessCodePage = codePage;
+        }
+
+        return status;
+    }
+
+#ifdef _WIN64
     if (isWow64)
     {
         PH_STRINGREF systemRootSr;
