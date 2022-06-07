@@ -10563,6 +10563,81 @@ NTSTATUS PhGetProcessArchitecture(
     return status;
 }
 
+NTSTATUS PhGetProcessImageBaseAddress(
+    _In_ HANDLE ProcessHandle,
+    _Out_ PVOID* ImageBaseAddress
+    )
+{
+    NTSTATUS status;
+    PVOID pebBaseAddress;
+    PVOID baseAddress;
+#ifdef _WIN64
+    BOOLEAN isWow64;
+
+    PhGetProcessIsWow64(ProcessHandle, &isWow64);
+
+    if (isWow64)
+    {
+        ULONG imageBaseAddress32;
+
+        status = PhGetProcessPeb32(ProcessHandle, &pebBaseAddress);
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        // No PEB for System and minimal/pico processes. (dmex)
+        if (!pebBaseAddress)
+            return STATUS_UNSUCCESSFUL;
+
+        status = NtReadVirtualMemory(
+            ProcessHandle,
+            PTR_ADD_OFFSET(pebBaseAddress, UFIELD_OFFSET(PEB32, ImageBaseAddress)),
+            &imageBaseAddress32,
+            sizeof(ULONG),
+            NULL
+            );
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        baseAddress = UlongToPtr(imageBaseAddress32);
+    }
+    else
+#endif
+    {
+        PVOID imageBaseAddress;
+
+        status = PhGetProcessPeb(ProcessHandle, &pebBaseAddress);
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        // No PEB for System and minimal/pico processes. (dmex)
+        if (!pebBaseAddress)
+            return STATUS_UNSUCCESSFUL;
+
+        status = NtReadVirtualMemory(
+            ProcessHandle,
+            PTR_ADD_OFFSET(pebBaseAddress, UFIELD_OFFSET(PEB, ImageBaseAddress)),
+            &imageBaseAddress,
+            sizeof(PVOID),
+            NULL
+            );
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        baseAddress = imageBaseAddress;
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        *ImageBaseAddress = baseAddress;
+    }
+
+    return status;
+}
+
 NTSTATUS PhGetProcessCodePage(
     _In_ HANDLE ProcessHandle,
     _Out_ PUSHORT ProcessCodePage
@@ -10763,6 +10838,85 @@ CleanupExit:
     }
 
     PhDereferenceObject(kernel32FileName);
+
+    return status;
+}
+
+/**
+ * Gets whether the process is running under the POSIX subsystem.
+ *
+ * \param ProcessHandle A handle to a process. The handle
+ * must have PROCESS_QUERY_LIMITED_INFORMATION and
+ * PROCESS_VM_READ access.
+ * \param IsPosix A variable which receives a boolean
+ * indicating whether the process is running under the
+ * POSIX subsystem.
+ */
+NTSTATUS PhGetProcessIsPosix(
+    _In_ HANDLE ProcessHandle,
+    _Out_ PBOOLEAN IsPosix
+    )
+{
+    NTSTATUS status;
+    PVOID pebBaseAddress;
+    ULONG imageSubsystem;
+#ifdef _WIN64
+    BOOLEAN isWow64;
+#endif
+
+    if (WindowsVersion >= WINDOWS_10)
+    {
+        *IsPosix = FALSE; // Not supported (dmex)
+        return STATUS_SUCCESS;
+    }
+
+#ifdef _WIN64
+    PhGetProcessIsWow64(ProcessHandle, &isWow64);
+
+    if (isWow64)
+    {
+        status = PhGetProcessPeb32(ProcessHandle, &pebBaseAddress);
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        // No PEB for System and minimal/pico processes. (dmex)
+        if (!pebBaseAddress)
+            return STATUS_UNSUCCESSFUL;
+
+        status = NtReadVirtualMemory(
+            ProcessHandle,
+            PTR_ADD_OFFSET(pebBaseAddress, UFIELD_OFFSET(PEB32, ImageSubsystem)),
+            &imageSubsystem,
+            sizeof(ULONG),
+            NULL
+            );
+    }
+    else
+#endif
+    {
+        status = PhGetProcessPeb(ProcessHandle, &pebBaseAddress);
+
+        if (!NT_SUCCESS(status))
+            return status;
+
+        // No PEB for System and minimal/pico processes. (dmex)
+        if (!pebBaseAddress)
+            return STATUS_UNSUCCESSFUL;
+
+        status = NtReadVirtualMemory(
+            ProcessHandle,
+            PTR_ADD_OFFSET(pebBaseAddress, UFIELD_OFFSET(PEB, ImageSubsystem)),
+            &imageSubsystem,
+            sizeof(ULONG),
+            NULL
+            );
+    }
+
+    if (NT_SUCCESS(status))
+    {
+        *IsPosix = imageSubsystem == IMAGE_SUBSYSTEM_POSIX_CUI;
+    }
 
     return status;
 }
